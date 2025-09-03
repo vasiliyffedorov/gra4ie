@@ -10,7 +10,22 @@ ini_set('display_errors', 1);
 error_reporting(E_ALL);
 set_time_limit(300);
 
-/** Нормализация и разделение override-параметров */
+$directories = [
+    __DIR__ . '/logs',
+    __DIR__ . '/cache'
+];
+
+foreach ($directories as $dir) {
+    if (!is_dir($dir)) {
+        if (!mkdir($dir, 0755, true)) {
+            error_log("Не удалось создать директорию: $dir");
+            http_response_code(500);
+            echo json_encode(['status' => 'error', 'error' => 'Internal server error']);
+            exit;
+        }
+    }
+}
+
 function normalizeQuery(string $q): string {
     return trim(preg_replace('/\s+/', ' ', str_replace(["\r","\n"], '', $q)));
 }
