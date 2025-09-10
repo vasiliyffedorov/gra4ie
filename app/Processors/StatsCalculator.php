@@ -27,6 +27,8 @@ class StatsCalculator
     public function updateConfig(array $config): void
     {
         $this->config = $config;
+        $this->dataProcessor->updateConfig($config);
+        $this->anomalyDetector->updateConfig($config);
     }
 
     public function recalculateStats(string $query, string $labelsJson, array $liveData, array $historyData): array

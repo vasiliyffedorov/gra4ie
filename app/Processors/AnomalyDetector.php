@@ -12,6 +12,11 @@ class AnomalyDetector
         $this->logger = $logger;
     }
 
+    public function updateConfig(array $config): void
+    {
+        $this->config = $config;
+    }
+
     /**
      * Рассчитывает статистику аномалий.
      *
