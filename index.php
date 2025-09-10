@@ -132,6 +132,26 @@ if ($method==='GET' && $path==='/api/v1/labels') {
     exit;
 }
 
+// POST /api/v1/labels
+if ($method==='POST' && $path==='/api/v1/labels') {
+    jsonSuccess($proxy->getMetricNames());
+    exit;
+}
+
+// GET /api/v1/metadata
+if ($method==='GET' && $path==='/api/v1/metadata') {
+    $metrics = $proxy->getMetricNames();
+    $metadata = [];
+    foreach ($metrics as $metric) {
+        $metadata[$metric] = [
+            'type' => 'gauge',
+            'help' => "Metric from Grafana dashboard panel: $metric"
+        ];
+    }
+    jsonSuccess($metadata);
+    exit;
+}
+
 // GET /api/v1/label/__name__/values
 if ($method==='GET' && $path==='/api/v1/label/__name__/values') {
     jsonSuccess($proxy->getMetricNames());
