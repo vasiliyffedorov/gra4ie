@@ -1,21 +1,24 @@
 <?php
+declare(strict_types=1);
+
+require_once __DIR__ . '/../Interfaces/CacheManagerInterface.php';
 require_once __DIR__ . '/../Utilities/Logger.php';
 require_once __DIR__ . '/SQLiteCacheDatabase.php';
 require_once __DIR__ . '/SQLiteCacheIO.php';
 require_once __DIR__ . '/SQLiteCacheMaintenance.php';
 require_once __DIR__ . '/SQLiteCacheConfig.php';
 
-class SQLiteCacheManager
+class SQLiteCacheManager implements CacheManagerInterface
 {
     private $dbManager;
     private $ioManager;
     private $maintenanceManager;
     private $configManager;
-    private $logger;
+    private LoggerInterface $logger;
     private $maxTtl;
     private $config;
 
-    public function __construct(string $dbPath, Logger $logger, int $maxTtl = 86400, array $config = [])
+    public function __construct(string $dbPath, LoggerInterface $logger, int $maxTtl = 86400, array $config = [])
     {
         $this->logger = $logger;
         $this->maxTtl = $maxTtl;

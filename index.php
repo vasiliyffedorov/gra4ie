@@ -1,9 +1,6 @@
 <?php
 declare(strict_types=1);
-require_once __DIR__ . '/app/Utilities/Logger.php';
-require_once __DIR__ . '/app/Cache/CacheManagerFactory.php';
-require_once __DIR__ . '/app/Processors/CorridorBuilder.php';
-require_once __DIR__ . '/app/Clients/GrafanaProxyClient.php';
+require_once __DIR__ . '/app/DI/Container.php';
 
 header('Content-Type: application/json');
 ini_set('display_errors', 1);
@@ -112,18 +109,18 @@ function nest(array $flatEntries): array {
 }
 
 $config = nest($flatIni);
-$logger = new Logger(
-    $config['log_file'],
-    Logger::{"LEVEL_" . strtoupper($config['log_level'] ?? 'INFO')}
-);
 
-// 2) Grafana client
-$proxy = new GrafanaProxyClient(
-    $config['grafana_url'],
-    $config['grafana_api_token'],
-    $logger,
-    $config['blacklist_datasource_ids'] ?? [] // Pass blacklist_datasource_ids to GrafanaProxyClient
-);
+// Валидация конфига
+$requiredKeys = ['grafana_url', 'grafana_api_token', 'log_file'];
+foreach ($requiredKeys as $key) {
+    if (!isset($config[$key])) {
+        jsonError("Missing required config key: $key", 500);
+    }
+}
+
+$container = new Container($config);
+$logger = $container->get(LoggerInterface::class);
+$proxy = $container->get(GrafanaClientInterface::class);
 
 // 3) роутинг
 $method = $_SERVER['REQUEST_METHOD'];
@@ -175,11 +172,8 @@ if ($method==='POST' && $path==='/api/v1/query_range') {
     $step  = (int)($params['step']  ?? 60);
 
     // и строим коридор
-    $corridorBuilder = new CorridorBuilder(
-        $config['grafana_url'],
-        $logger,
-        $finalConfig
-    );
+    $corridorBuilder = new CorridorBuilder($container);
+    $corridorBuilder->updateConfig($finalConfig);
     $result = $corridorBuilder->build(
         $params['query'],
         $start,

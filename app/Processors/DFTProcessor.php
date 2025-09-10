@@ -1,13 +1,19 @@
 <?php
+declare(strict_types=1);
+
+require_once __DIR__ . '/../Interfaces/DFTProcessorInterface.php';
 require_once __DIR__ . '/../Utilities/Logger.php';
+require_once __DIR__ . '/FourierTransformer.php';
 
-class DFTProcessor {
-    private $config;
-    private $logger;
+class DFTProcessor implements DFTProcessorInterface {
+    private array $config;
+    private LoggerInterface $logger;
+    private FourierTransformerInterface $fourierTransformer;
 
-    public function __construct(array $config, Logger $logger) {
+    public function __construct(array $config, LoggerInterface $logger) {
         $this->config = $config;
         $this->logger = $logger;
+        $this->fourierTransformer = new FourierTransformer($logger);
     }
 
     public function generateDFT(array $bounds, int $start, int $end, int $step): array {
@@ -47,8 +53,8 @@ class DFTProcessor {
         $normalizedUpper = $this->normalizeData($upperValues, $times, $upperTrend);
         $normalizedLower = $this->normalizeData($lowerValues, $times, $lowerTrend);
 
-        $upperCoefficients = $this->calculateDFT($normalizedUpper, $maxHarmonics, $totalDuration, $numPoints);
-        $lowerCoefficients = $this->calculateDFT($normalizedLower, $maxHarmonics, $totalDuration, $numPoints);
+        $upperCoefficients = $this->fourierTransformer->calculateDFT($normalizedUpper, $maxHarmonics, $totalDuration, $numPoints);
+        $lowerCoefficients = $this->fourierTransformer->calculateDFT($normalizedLower, $maxHarmonics, $totalDuration, $numPoints);
 
         return [
             'upper' => [
@@ -105,88 +111,6 @@ class DFTProcessor {
         return $normalized;
     }
 
-    private function calculateDFT(array $values, int $maxHarmonics, int $totalDuration, int $numPoints): array {
-        $coefficients = [];
-        $N = count($values);
-
-        for ($k = 0; $k <= $N / 2; $k++) {
-            $sumReal = 0;
-            $sumImag = 0;
-            for ($n = 0; $n < $N; $n++) {
-                $angle = 2 * M_PI * $k * $n / $N;
-                $sumReal += $values[$n] * cos($angle);
-                $sumImag -= $values[$n] * sin($angle);
-            }
-            $amplitude = sqrt($sumReal * $sumReal + $sumImag * $sumImag) / ($k == 0 ? $N : $N / 2);
-            $phase = ($sumReal == 0 && $sumImag == 0) ? 0 : atan2($sumImag, $sumReal);
-
-            $coefficients[$k] = [
-                'amplitude' => $amplitude,
-                'phase' => $phase
-            ];
-        }
-
-        $contributions = $this->calculateHarmonicContributions($coefficients, $totalDuration, $numPoints);
-
-        $minContribution = $this->config['corrdor_params']['min_amplitude'] * $totalDuration * (2 / M_PI) ?? 1e-6;
-        $filteredCoefficients = [];
-        foreach ($coefficients as $k => $coeff) {
-            if ($contributions[$k] >= $minContribution) {
-                $filteredCoefficients[$k] = $coeff;
-            }
-        }
-
-        if (!isset($filteredCoefficients[0]) && isset($coefficients[0])) {
-            $filteredCoefficients[0] = $coefficients[0];
-        }
-
-        $sortedCoefficients = $filteredCoefficients;
-        uasort($sortedCoefficients, function ($a, $b) use ($contributions, $filteredCoefficients) {
-            $kA = array_search($a, $filteredCoefficients, true);
-            $kB = array_search($b, $filteredCoefficients, true);
-            return $contributions[$kB] <=> $contributions[$kA];
-        });
-
-        $selectedCoefficients = [];
-        $selectedCoefficients[0] = $filteredCoefficients[0] ?? ['amplitude' => 0, 'phase' => 0];
-        $count = 1;
-        foreach ($sortedCoefficients as $k => $coeff) {
-            if ($k != 0 && $count < $maxHarmonics) {
-                $selectedCoefficients[$k] = $coeff;
-                $count++;
-            }
-        }
-
-        return $selectedCoefficients;
-    }
-
-    private function calculateHarmonicContributions(array $coefficients, int $totalDuration, int $numPoints): array {
-        $contributions = [];
-        $T = $totalDuration;
-        $dt = $T / $numPoints;
-
-        foreach ($coefficients as $k => $coeff) {
-            $amplitude = $coeff['amplitude'];
-            $phase = $coeff['phase'];
-            $sum = 0;
-
-            for ($i = 0; $i < $numPoints; $i++) {
-                $t = $i * $dt;
-                $angle = 2 * M_PI * $k * $t / $T + $phase;
-                $value = $amplitude * cos($angle);
-                $sum += abs($value) * $dt;
-            }
-
-            if ($k == 0) {
-                $sum = $amplitude * $T;
-            }
-
-            $contributions[$k] = $sum;
-        }
-
-        return $contributions;
-    }
-
     public function restoreFullDFT(array $coefficients, int $start, int $end, int $step, array $meta, ?array $trend = null): array {
         $dataStart = $meta['dataStart'] ?? $start;
         $totalDuration = $meta['totalDuration'] ?? ($end - $start);
@@ -197,7 +121,7 @@ class DFTProcessor {
         for ($t = $start; $t <= $end; $t += $step) {
             // Нормализуем время относительно периода данных, чтобы гармоники продолжались
             $normalizedTime = ($t - $dataStart) / $periodSeconds;
-            $value = $this->calculateDFTValue($coefficients, $normalizedTime, $periodSeconds);
+            $value = $this->fourierTransformer->calculateDFTValue($coefficients, $normalizedTime, $periodSeconds);
 
             // Добавляем тренд, если он предоставлен
             if ($trend !== null) {
@@ -212,23 +136,5 @@ class DFTProcessor {
         }
 
         return $restored;
-    }
-
-    private function calculateDFTValue(array $coefficients, float $normalizedTime, int $periodSeconds): float {
-        $value = 0;
-        $baseAmplitude = $coefficients[0]['amplitude'] ?? 0;
-
-        foreach ($coefficients as $harmonic => $coeff) {
-            if ($harmonic == 0) {
-                $value += $coeff['amplitude'];
-                continue;
-            }
-            $frequency = $harmonic;
-            $angle = 2 * M_PI * $frequency * $normalizedTime + $coeff['phase'];
-            $contribution = $coeff['amplitude'] * cos($angle);
-            $value += $contribution;
-        }
-
-        return $value;
     }
 }

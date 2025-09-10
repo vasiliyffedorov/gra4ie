@@ -1,4 +1,6 @@
 <?php
+declare(strict_types=1);
+
 require_once __DIR__.'/../Utilities/Logger.php';
 require_once __DIR__.'/../Clients/GrafanaProxyClient.php';
 require_once __DIR__.'/../Formatters/ResponseFormatter.php';
@@ -12,40 +14,49 @@ require_once __DIR__.'/CorridorWidthEnsurer.php';
 
 class CorridorBuilder
 {
-    private $client;
-    private $logger;
-    private $config;
-    private $responseFormatter;
-    private $cacheManager;
-    private $dataProcessor;
-    private $dftProcessor;
-    private $anomalyDetector;
-    private $statsCacheManager;
+    private GrafanaClientInterface $client;
+    private LoggerInterface $logger;
+    private array $config;
+    private ResponseFormatter $responseFormatter;
+    private CacheManagerInterface $cacheManager;
+    private DataProcessor $dataProcessor;
+    private DFTProcessorInterface $dftProcessor;
+    private AnomalyDetector $anomalyDetector;
+    private StatsCacheManager $statsCacheManager;
+    private Container $container;
 
-    public function __construct(string $grafanaUrl, Logger $logger, array $config)
+    public function __construct(Container $container)
     {
-        $this->config = $config;
-        $this->logger = $logger;
-
-        PerformanceMonitor::init(
-            $config['performance']['enabled'] ?? false,
-            $config['performance']['threshold_ms'] ?? 5.0
-        );
-
-        $this->client           = new GrafanaProxyClient($grafanaUrl, $config['grafana_api_token'] ?? '', $logger);
-        $this->responseFormatter= new ResponseFormatter($config);
-        $this->cacheManager     = CacheManagerFactory::create($config, $logger);
-        $this->dataProcessor    = new DataProcessor($config, $logger);
-        $this->dftProcessor     = new DFTProcessor($config, $logger);
-        $this->anomalyDetector  = new AnomalyDetector($config, $logger);
-        $this->statsCacheManager= new StatsCacheManager(
-            $config, $logger,
+        $this->container = $container;
+        $this->config = $container->get('config');
+        $this->logger = $container->get(LoggerInterface::class);
+        $this->client = $container->get(GrafanaClientInterface::class);
+        $this->cacheManager = $container->get(CacheManagerInterface::class);
+        $this->dataProcessor = new DataProcessor($this->config, $this->logger);
+        $this->dftProcessor = $container->get(DFTProcessorInterface::class);
+        $this->responseFormatter = new ResponseFormatter($this->config);
+        $this->anomalyDetector = new AnomalyDetector($this->config, $this->logger);
+        $this->statsCacheManager = new StatsCacheManager(
+            $this->config, $this->logger,
             $this->cacheManager,
             $this->dataProcessor,
             $this->dftProcessor,
             $this->anomalyDetector,
             $this->responseFormatter
         );
+
+        PerformanceMonitor::init(
+            $this->config['performance']['enabled'] ?? false,
+            $this->config['performance']['threshold_ms'] ?? 5.0
+        );
+    }
+
+    public function updateConfig(array $config): void
+    {
+        $this->config = $config;
+        $this->dataProcessor->updateConfig($config);
+        $this->responseFormatter->updateConfig($config);
+        $this->anomalyDetector = new AnomalyDetector($config, $this->logger);
     }
 
     /**
@@ -98,12 +109,12 @@ class CorridorBuilder
 
             if ($needRecalc) {
                 $cached = $this->statsCacheManager->recalculateStats(
-                    $query, $labelsJson, $orig, $longGrouped[$labelsJson] ?? [], $this->config
+                    $query, $labelsJson, $orig, $longGrouped[$labelsJson] ?? [], $finalConfig
                 );
             }
 
             // если мало истории — placeholder-режим
-            if (count($longGrouped[$labelsJson] ?? []) < ($this->config['corrdor_params']['min_data_points'] ?? 10)) {
+            if (count($longGrouped[$labelsJson] ?? []) < ($finalConfig['corrdor_params']['min_data_points'] ?? 10)) {
                 $results[] = $this->statsCacheManager->processInsufficientData(
                     $query, $labelsJson, $orig, $start, $end, $step
                 );
@@ -135,18 +146,18 @@ class CorridorBuilder
                 $upper, $lower,
                 $cached['dft_upper']['coefficients'][0]['amplitude'] ?? 0,
                 $cached['dft_lower']['coefficients'][0]['amplitude'] ?? 0,
-                $this->config, $this->logger
+                $finalConfig, $this->logger
             );
 
             // аномалии
             $currStats = $this->anomalyDetector->calculateAnomalyStats(
                 $orig, $cU, $cL,
-                $this->config['corrdor_params']['default_percentiles'],
+                $finalConfig['corrdor_params']['default_percentiles'],
                 true
             );
 
             // concern-метрики
-            $wsize = $this->config['corrdor_params']['window_size'];
+            $wsize = $finalConfig['corrdor_params']['window_size'];
             $aboveC = $this->anomalyDetector->calculateIntegralMetric(
                 $currStats['above'], $cached['meta']['anomaly_stats']['above'] ?? []
             );
@@ -179,6 +190,6 @@ class CorridorBuilder
         }
 
         PerformanceMonitor::end('total_processing');
-        return $this->responseFormatter->formatForGrafana($results, $query, $showMetrics);
+        return $this->responseFormatter->formatForGrafana($results, $query, $finalConfig['dashboard']['show_metrics'] ?? $showMetrics);
     }
 }
