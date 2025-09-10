@@ -80,7 +80,7 @@ class SQLiteCacheConfig
             if (!$inTransaction) {
                 $db->commit();
             }
-            $this->logger->info("Сброшены кастомные параметры и config_hash для запроса: $query", __FILE__, __LINE__);
+            $this->logger->info("Сброшены кастомные параметры и config_hash для запроса: $query");
             return true;
         } catch (PDOException $e) {
             if ($db->inTransaction()) {
@@ -107,7 +107,7 @@ class SQLiteCacheConfig
             if (!$inTransaction) {
                 $db->commit();
             }
-            $this->logger->info("Обновлены параметры для query_id: $queryId, custom_params: $customParams, config_hash: $configHash", __FILE__, __LINE__);
+            $this->logger->info("Обновлены параметры для query_id: $queryId, custom_params: $customParams, config_hash: $configHash");
         } catch (PDOException $e) {
             if ($db->inTransaction()) {
                 $db->rollBack();

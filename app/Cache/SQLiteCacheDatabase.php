@@ -15,7 +15,7 @@ class SQLiteCacheDatabase
 
         if ($isNewDb) {
             $this->initializeDatabase();
-            $this->logger->info("Инициализирована новая база данных кэша SQLite: $dbPath", __FILE__, __LINE__);
+            $this->logger->info("Инициализирована новая база данных кэша SQLite: $dbPath");
         } else {
             $this->checkAndMigrateDatabase();
         }
@@ -90,14 +90,14 @@ class SQLiteCacheDatabase
             }
         }
         if (!$hasCustomParams) {
-            $this->logger->warn("Добавление столбца custom_params в таблицу queries.", __FILE__, __LINE__);
+            $this->logger->warn("Добавление столбца custom_params в таблицу queries.");
             $this->db->exec("ALTER TABLE queries ADD COLUMN custom_params TEXT");
-            $this->logger->info("Столбец custom_params добавлен в таблицу queries.", __FILE__, __LINE__);
+            $this->logger->info("Столбец custom_params добавлен в таблицу queries.");
         }
         if (!$hasConfigHash) {
-            $this->logger->warn("Добавление столбца config_hash в таблицу queries.", __FILE__, __LINE__);
+            $this->logger->warn("Добавление столбца config_hash в таблицу queries.");
             $this->db->exec("ALTER TABLE queries ADD COLUMN config_hash TEXT");
-            $this->logger->info("Столбец config_hash добавлен в таблицу queries.", __FILE__, __LINE__);
+            $this->logger->info("Столбец config_hash добавлен в таблицу queries.");
         }
 
         $result = $this->db->query("PRAGMA table_info(dft_cache)");
@@ -113,20 +113,20 @@ class SQLiteCacheDatabase
             }
         }
         if (!$hasUpperTrend) {
-            $this->logger->warn("Добавление столбца upper_trend_json в таблицу dft_cache.", __FILE__, __LINE__);
+            $this->logger->warn("Добавление столбца upper_trend_json в таблицу dft_cache.");
             $this->db->exec("ALTER TABLE dft_cache ADD COLUMN upper_trend_json TEXT");
-            $this->logger->info("Столбец upper_trend_json добавлен в таблицу dft_cache.", __FILE__, __LINE__);
+            $this->logger->info("Столбец upper_trend_json добавлен в таблицу dft_cache.");
         }
         if (!$hasLowerTrend) {
-            $this->logger->warn("Добавление столбца lower_trend_json в таблицу dft_cache.", __FILE__, __LINE__);
+            $this->logger->warn("Добавление столбца lower_trend_json в таблицу dft_cache.");
             $this->db->exec("ALTER TABLE dft_cache ADD COLUMN lower_trend_json TEXT");
-            $this->logger->info("Столбец lower_trend_json добавлен в таблицу dft_cache.", __FILE__, __LINE__);
+            $this->logger->info("Столбец lower_trend_json добавлен в таблицу dft_cache.");
         }
 
         // Migrate for grafana_metrics table
         $tableExists = $this->db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='grafana_metrics'")->fetchColumn();
         if (!$tableExists) {
-            $this->logger->warn("Создание таблицы grafana_metrics.", __FILE__, __LINE__);
+            $this->logger->warn("Создание таблицы grafana_metrics.");
             $this->db->exec("
                 CREATE TABLE grafana_metrics (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -137,7 +137,7 @@ class SQLiteCacheDatabase
                 )
             ");
             $this->db->exec("INSERT INTO grafana_metrics (metrics_key, metrics_json) VALUES ('global_metrics', '{}')");
-            $this->logger->info("Таблица grafana_metrics создана и инициализирована.", __FILE__, __LINE__);
+            $this->logger->info("Таблица grafana_metrics создана и инициализирована.");
         }
     }
 }

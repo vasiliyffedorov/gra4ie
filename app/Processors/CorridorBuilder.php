@@ -105,7 +105,7 @@ class CorridorBuilder
         // 3) по каждой группе
         foreach ($grouped as $labelsJson => $orig) {
             if ($count++ >= ($this->config['timeout']['max_metrics'] ?? 10)) {
-                $this->logger->warn("Превышен лимит метрик", __FILE__, __LINE__);
+                $this->logger->warn("Превышен лимит метрик");
                 break;
             }
 
@@ -145,7 +145,7 @@ class CorridorBuilder
             if (!empty($this->config['scaleCorridor']) && abs($factor-1) > 1e-6) {
                 foreach ($upper as &$pt) { $pt['value'] *= $factor; }
                 foreach ($lower as &$pt) { $pt['value'] *= $factor; }
-                $this->logger->info("Масштабирование коридора: {$factor}", __FILE__, __LINE__);
+                $this->logger->info("Масштабирование коридора: {$factor}");
             }
 
             // корректируем ширину

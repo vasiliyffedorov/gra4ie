@@ -24,9 +24,9 @@ class SQLiteCacheMaintenance
                 WHERE id NOT IN (SELECT DISTINCT query_id FROM dft_cache)
                 AND last_accessed < '$cutoff'"
             );
-            $this->logger->info("Очищены старые записи кэша старше $maxAgeDays дней", __FILE__, __LINE__);
+            $this->logger->info("Очищены старые записи кэша старше $maxAgeDays дней");
         } catch (PDOException $e) {
-            $this->logger->error("Не удалось очистить старые записи кэша SQLite: " . $e->getMessage(), __FILE__, __LINE__);
+            $this->logger->error("Не удалось очистить старые записи кэша SQLite: " . $e->getMessage());
         }
     }
 }

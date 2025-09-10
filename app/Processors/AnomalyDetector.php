@@ -308,11 +308,7 @@ class AnomalyDetector
             ? max($currentStats['sizes']) * $sizeMultiplier
             : 0;
 
-        $this->logger->info(
-            "Applied multipliers: duration_multiplier=$durationMultiplier (duration=$currentDuration), "
-            . "size_multiplier=$sizeMultiplier (size=$currentSize)",
-            __FILE__, __LINE__
-        );
+        $this->logger->info("Applied multipliers: duration_multiplier=$durationMultiplier (duration=$currentDuration), size_multiplier=$sizeMultiplier (size=$currentSize)");
 
         if ($currentDuration == 0 || $currentSize == 0) {
             return 0;
@@ -359,11 +355,7 @@ class AnomalyDetector
             $currentStats['sizes']
         ));
 
-        $this->logger->info(
-            "Applied multipliers in sum: duration_multiplier=$durationMultiplier, "
-            . "size_multiplier=$sizeMultiplier, total_area=$currentTotalArea",
-            __FILE__, __LINE__
-        );
+        $this->logger->info("Applied multipliers in sum: duration_multiplier=$durationMultiplier, size_multiplier=$sizeMultiplier, total_area=$currentTotalArea");
 
         if ($currentTotalArea == 0) {
             return 0;

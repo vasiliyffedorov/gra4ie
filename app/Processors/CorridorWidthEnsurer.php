@@ -42,7 +42,7 @@ class CorridorWidthEnsurer
                 $correctedUpper[$i]['value'] = $mid + $halfW;
                 $correctedLower[$i]['value'] = $mid - $halfW;
             }
-            $logger->info("Использованы нулевые гармоники для коридора", __FILE__, __LINE__);
+            $logger->info("Использованы нулевые гармоники для коридора");
             return [$correctedUpper, $correctedLower];
         }
 
@@ -57,7 +57,7 @@ class CorridorWidthEnsurer
                 'upper_value'=>$breakPoints[0]['upper_value'],
                 'lower_value'=>$breakPoints[0]['lower_value']
             ]);
-            $logger->info("Добавлена начальная точка разрыва", __FILE__, __LINE__);
+            $logger->info("Добавлена начальная точка разрыва");
         }
         if (end($breakPoints)['time'] < $lastTime) {
             $bp = end($breakPoints);
@@ -66,7 +66,7 @@ class CorridorWidthEnsurer
                 'upper_value'=>$bp['upper_value'],
                 'lower_value'=>$bp['lower_value']
             ];
-            $logger->info("Добавлена конечная точка разрыва", __FILE__, __LINE__);
+            $logger->info("Добавлена конечная точка разрыва");
         }
 
         // для каждой точки делаем линейную интерполяцию между соседними breakPoints

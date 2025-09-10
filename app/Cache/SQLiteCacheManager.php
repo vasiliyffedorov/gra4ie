@@ -31,7 +31,7 @@ class SQLiteCacheManager implements CacheManagerInterface
             $this->maintenanceManager = new SQLiteCacheMaintenance($this->dbManager, $logger);
             $this->configManager = new SQLiteCacheConfig($logger);
         } catch (Exception $e) {
-            $this->logger->error("Ошибка инициализации SQLiteCacheManager: " . $e->getMessage(), __FILE__, __LINE__);
+            $this->logger->error("Ошибка инициализации SQLiteCacheManager: " . $e->getMessage());
             throw new Exception("Не удалось инициализировать кэш SQLite");
         }
     }
@@ -107,10 +107,10 @@ class SQLiteCacheManager implements CacheManagerInterface
                     last_updated = CURRENT_TIMESTAMP
             ");
             $stmt->execute([':json' => $json]);
-            $this->logger->info("Кэш метрик Grafana сохранен в БД", __FILE__, __LINE__);
+            $this->logger->info("Кэш метрик Grafana сохранен в БД");
             return true;
         } catch (PDOException $e) {
-            $this->logger->error("Ошибка сохранения кэша метрик Grafana: " . $e->getMessage(), __FILE__, __LINE__);
+            $this->logger->error("Ошибка сохранения кэша метрик Grafana: " . $e->getMessage());
             return false;
         }
     }
@@ -125,13 +125,13 @@ class SQLiteCacheManager implements CacheManagerInterface
             if ($row) {
                 $metrics = json_decode($row['metrics_json'], true);
                 if (json_last_error() === JSON_ERROR_NONE) {
-                    $this->logger->info("Кэш метрик Grafana загружен из БД", __FILE__, __LINE__);
+                    $this->logger->info("Кэш метрик Grafana загружен из БД");
                     return $metrics;
                 }
             }
             return null;
         } catch (PDOException $e) {
-            $this->logger->error("Ошибка загрузки кэша метрик Grafana: " . $e->getMessage(), __FILE__, __LINE__);
+            $this->logger->error("Ошибка загрузки кэша метрик Grafana: " . $e->getMessage());
             return null;
         }
     }

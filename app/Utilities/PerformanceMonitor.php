@@ -32,7 +32,7 @@ class PerformanceMonitor {
         if ($duration > self::$thresholdMs) {
             global $logger;
             if ($logger instanceof Logger) {
-                $logger->warn("Slow operation: $name took {$duration}ms", __FILE__, __LINE__);
+                $logger->warning("Slow operation: $name took {$duration}ms");
             }
         }
     }

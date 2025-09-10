@@ -56,11 +56,7 @@ class ResponseFormatter {
         }
 
         if (!is_array($metricsToShow)) {
-            $this->anomalyDetector->logger->error(
-                "Invalid dashboard.show_metrics configuration: expected array, got " . gettype($metricsToShow),
-                __FILE__,
-                __LINE__
-            );
+            $this->anomalyDetector->logger->error("Invalid dashboard.show_metrics configuration: expected array, got " . gettype($metricsToShow));
             return [
                 'status' => 'error',
                 'errorType' => 'invalid_configuration',

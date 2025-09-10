@@ -31,7 +31,7 @@ class DataProcessor {
 
     public function getActualDataRange(array $data, ?int $defaultStart = null, ?int $defaultEnd = null): array {
         if (empty($data)) {
-            $this->logger->warn("Пустые данные для определения диапазона", __FILE__, __LINE__);
+            $this->logger->warn("Пустые данные для определения диапазона");
             return [
                 'start' => $defaultStart ?? time() - 86400,
                 'end' => $defaultEnd ?? time()
@@ -50,7 +50,7 @@ class DataProcessor {
 
     public function calculateBounds(array $data, int $start, int $end, int $step): array {
         if (empty($data)) {
-            $this->logger->warn("Пустые данные для расчета границ", __FILE__, __LINE__);
+            $this->logger->warn("Пустые данные для расчета границ");
             return ['upper' => [], 'lower' => []];
         }
 
@@ -63,7 +63,7 @@ class DataProcessor {
         if (!is_array($this->config['corrdor_params']) ||
             !isset($this->config['corrdor_params']['window_size']) ||
             !isset($this->config['corrdor_params']['margin_percent'])) {
-            $this->logger->error("Неверная конфигурация метода adaptive", __FILE__, __LINE__);
+            $this->logger->error("Неверная конфигурация метода adaptive");
             throw new Exception("Неверная конфигурация метода adaptive");
         }
 

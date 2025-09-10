@@ -66,13 +66,13 @@ class SQLiteCacheIO
             if ($db->inTransaction()) {
                 $db->commit();
             }
-            $this->logger->info("Сохранен кэш для запроса: $query, dft_rebuild_count: {$meta['dft_rebuild_count']}, config_hash: $currentConfigHash", __FILE__, __LINE__);
+            $this->logger->info("Сохранен кэш для запроса: $query, dft_rebuild_count: {$meta['dft_rebuild_count']}, config_hash: $currentConfigHash");
             return true;
         } catch (PDOException $e) {
             if ($db->inTransaction()) {
                 $db->rollBack();
             }
-            $this->logger->error("Не удалось сохранить в кэш SQLite: " . $e->getMessage(), __FILE__, __LINE__);
+            $this->logger->error("Не удалось сохранить в кэш SQLite: " . $e->getMessage());
             return false;
         }
     }
@@ -120,7 +120,7 @@ class SQLiteCacheIO
                 ]
             ];
         } catch (PDOException $e) {
-            $this->logger->error("Не удалось загрузить из кэша SQLite: " . $e->getMessage(), __FILE__, __LINE__);
+            $this->logger->error("Не удалось загрузить из кэша SQLite: " . $e->getMessage());
             return null;
         }
     }
@@ -169,7 +169,7 @@ class SQLiteCacheIO
             }
             return $results;
         } catch (PDOException $e) {
-            $this->logger->error("Не удалось загрузить все кэшированные метрики: " . $e->getMessage(), __FILE__, __LINE__);
+            $this->logger->error("Не удалось загрузить все кэшированные метрики: " . $e->getMessage());
             return [];
         }
     }
@@ -188,7 +188,7 @@ class SQLiteCacheIO
             $stmt->execute([':query' => $query, ':metric_hash' => $metricHash]);
             return $stmt->fetchColumn() > 0;
         } catch (PDOException $e) {
-            $this->logger->error("Не удалось проверить наличие кэша SQLite: " . $e->getMessage(), __FILE__, __LINE__);
+            $this->logger->error("Не удалось проверить наличие кэша SQLite: " . $e->getMessage());
             return false;
         }
     }
@@ -223,7 +223,7 @@ class SQLiteCacheIO
             }
             $age = time() - $row['created_at'];
             if ($age > $this->maxTtl) {
-                $this->logger->info("Кэш устарел для запроса: $query. Возраст: $age секунд", __FILE__, __LINE__);
+                $this->logger->info("Кэш устарел для запроса: $query. Возраст: $age секунд");
                 return true;
             }
             if ($row['dft_rebuild_count'] > ($this->config['cache']['max_rebuild_count'] ?? 10)) {
@@ -231,7 +231,7 @@ class SQLiteCacheIO
             }
             return false;
         } catch (PDOException $e) {
-            $this->logger->error("Не удалось проверить необходимость пересоздания кэша SQLite: " . $e->getMessage(), __FILE__, __LINE__);
+            $this->logger->error("Не удалось проверить необходимость пересоздания кэша SQLite: " . $e->getMessage());
             return true;
         }
     }

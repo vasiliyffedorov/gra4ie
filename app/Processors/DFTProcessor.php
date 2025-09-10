@@ -42,11 +42,7 @@ class DFTProcessor implements DFTProcessorInterface {
             $meanTime = array_sum($times) / $numPoints;
             $upperTrend['intercept'] = $upperMean - $commonSlope * $meanTime;
             $lowerTrend['intercept'] = $lowerMean - $commonSlope * $meanTime;
-            $this->logger->info(
-                "Использован общий средний тренд: slope=$commonSlope, upper_intercept={$upperTrend['intercept']}, lower_intercept={$lowerTrend['intercept']}",
-                __FILE__,
-                __LINE__
-            );
+            $this->logger->info("Использован общий средний тренд: slope=$commonSlope, upper_intercept={$upperTrend['intercept']}, lower_intercept={$lowerTrend['intercept']}");
         }
 
         // Нормализуем данные, вычитая тренд
@@ -71,7 +67,7 @@ class DFTProcessor implements DFTProcessorInterface {
     private function calculateLinearTrend(array $values, array $times): array {
         $n = count($values);
         if ($n < 2) {
-            $this->logger->warn("Недостаточно данных для вычисления тренда: $n точек", __FILE__, __LINE__);
+            $this->logger->warn("Недостаточно данных для вычисления тренда: $n точек");
             return ['slope' => 0, 'intercept' => $values[0] ?? 0];
         }
 
@@ -91,14 +87,14 @@ class DFTProcessor implements DFTProcessorInterface {
         $denominator = $sumXX - $n * $meanX * $meanX;
 
         if (abs($denominator) < 1e-10) {
-            $this->logger->warn("Нулевой или почти нулевой знаменатель при вычислении тренда", __FILE__, __LINE__);
+            $this->logger->warn("Нулевой или почти нулевой знаменатель при вычислении тренда");
             return ['slope' => 0, 'intercept' => $meanY];
         }
 
         $slope = ($sumXY - $n * $meanX * $meanY) / $denominator;
         $intercept = $meanY - $slope * $meanX;
 
-        $this->logger->info("Вычислен тренд: slope=$slope, intercept=$intercept", __FILE__, __LINE__);
+        $this->logger->info("Вычислен тренд: slope=$slope, intercept=$intercept");
         return ['slope' => $slope, 'intercept' => $intercept];
     }
 

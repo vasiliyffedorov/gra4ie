@@ -3,18 +3,19 @@ declare(strict_types=1);
 
 interface LoggerInterface
 {
-    public const LEVEL_DEBUG = 1;
-    public const LEVEL_INFO = 2;
-    public const LEVEL_WARN = 3;
-    public const LEVEL_ERROR = 4;
+    // PSR-3 levels mapping (optional, for internal use)
+    const LEVEL_DEBUG = 0;
+    const LEVEL_INFO = 1;
+    const LEVEL_WARN = 2;
+    const LEVEL_ERROR = 3;
 
-    public function __construct(string $logFile, int $level);
-
-    public function info(string $message, string $file, int $line): void;
-
-    public function warn(string $message, string $file, int $line): void;
-
-    public function error(string $message, string $file, int $line): void;
-
-    public function debug(string $message, string $file, int $line): void;
+    public function log($level, $message, array $context = []): void;
+    public function emergency($message, array $context = []): void;
+    public function alert($message, array $context = []): void;
+    public function critical($message, array $context = []): void;
+    public function error($message, array $context = []): void;
+    public function warning($message, array $context = []): void;
+    public function notice($message, array $context = []): void;
+    public function info($message, array $context = []): void;
+    public function debug($message, array $context = []): void;
 }

@@ -61,7 +61,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
     public function queryRange(string $metricName, int $start, int $end, int $step): array
     {
         if (!isset($this->metricsCache[$metricName])) {
-            $this->logger->error("Метрика не найдена в кэше Grafana: $metricName", __FILE__, __LINE__);
+            $this->logger->error("Метрика не найдена в кэше Grafana: $metricName");
             return [];
         }
 
@@ -70,7 +70,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
         // 1) Получаем JSON дашборда
         $dashJson = $this->httpRequest('GET', "{$this->grafanaUrl}/api/dashboards/uid/{$info['dashboard_uid']}");
         if (!$dashJson) {
-            $this->logger->error("Не удалось получить JSON дашборда {$info['dashboard_uid']}", __FILE__, __LINE__);
+            $this->logger->error("Не удалось получить JSON дашборда {$info['dashboard_uid']}");
             return [];
         }
 
@@ -85,7 +85,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
         }
 
         if (!$target || empty($target['targets'])) {
-            $this->logger->warn("Панель {$info['panel_id']} не содержит targets", __FILE__, __LINE__);
+            $this->logger->warn("Панель {$info['panel_id']} не содержит targets");
             return [];
         }
 
@@ -127,7 +127,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
 
         $resp = $this->httpRequest('POST', "{$this->grafanaUrl}/api/ds/query", $body);
         if (!$resp) {
-            $this->logger->error("DS query для $metricName завершился ошибкой", __FILE__, __LINE__);
+            $this->logger->error("DS query для $metricName завершился ошибкой");
             return [];
         }
 
@@ -142,14 +142,10 @@ class GrafanaProxyClient implements GrafanaClientInterface
         $cached = $this->cacheManager->loadGrafanaMetrics();
         if ($cached !== null) {
             $this->metricsCache = $cached;
-            $this->logger->info(
-                "Кэш метрик Grafana загружен: " . implode(', ', array_keys($this->metricsCache)),
-                __FILE__,
-                __LINE__
-            );
+            $this->logger->info("Кэш метрик Grafana загружен: " . implode(', ', array_keys($this->metricsCache)));
         } else {
             $this->metricsCache = [];
-            $this->logger->warn("Кэш метрик Grafana не найден, метрики будут пустыми до обновления", __FILE__, __LINE__);
+            $this->logger->warn("Кэш метрик Grafana не найден, метрики будут пустыми до обновления");
         }
     }
 
@@ -160,13 +156,9 @@ class GrafanaProxyClient implements GrafanaClientInterface
     {
         $this->initMetricsCache();
         if ($this->cacheManager->saveGrafanaMetrics($this->metricsCache)) {
-            $this->logger->info(
-                "Кэш метрик Grafana обновлен и сохранен: " . implode(', ', array_keys($this->metricsCache)),
-                __FILE__,
-                __LINE__
-            );
+            $this->logger->info("Кэш метрик Grafana обновлен и сохранен: " . implode(', ', array_keys($this->metricsCache)));
         } else {
-            $this->logger->error("Ошибка сохранения кэша метрик Grafana после обновления", __FILE__, __LINE__);
+            $this->logger->error("Ошибка сохранения кэша метрик Grafana после обновления");
         }
     }
 
@@ -177,7 +169,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
     {
         $resp = $this->httpRequest('GET', "{$this->grafanaUrl}/api/search?type=dash-db");
         if (!$resp) {
-            $this->logger->error("Не удалось получить список дашбордов", __FILE__, __LINE__);
+            $this->logger->error("Не удалось получить список дашбордов");
             return;
         }
 
@@ -188,7 +180,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
             $title = $dash['title'] ?: $uid;
             $dashJson = $this->httpRequest('GET', "{$this->grafanaUrl}/api/dashboards/uid/$uid");
             if (!$dashJson) {
-                $this->logger->warn("Не удалось загрузить дашборд $uid", __FILE__, __LINE__);
+                $this->logger->warn("Не удалось загрузить дашборд $uid");
                 continue;
             }
             $dashData = json_decode($dashJson, true);
@@ -198,13 +190,13 @@ class GrafanaProxyClient implements GrafanaClientInterface
                     continue;
                 }
                 if (empty($p['targets'])) {
-                    $this->logger->debug("Пропущена панель {$p['id']} в дашборде $uid: без targets", __FILE__, __LINE__);
+                    $this->logger->debug("Пропущена панель {$p['id']} в дашборде $uid: без targets");
                     continue;
                 }
                 // Check if the panel's datasource is in the blacklist
                 $datasourceId = $p['targets'][0]['datasource']['uid'] ?? null;
                 if ($datasourceId && in_array($datasourceId, $this->blacklistDatasourceIds)) {
-                    $this->logger->info("Пропущена панель {$p['id']} в дашборде $uid: datasource $datasourceId в черном списке", __FILE__, __LINE__);
+                    $this->logger->info("Пропущена панель {$p['id']} в дашборде $uid: datasource $datasourceId в черном списке");
                     continue;
                 }
                 $panelId    = (string)$p['id'];
@@ -219,11 +211,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
             }
         }
 
-        $this->logger->info(
-            "Кэш метрик Grafana инициализирован (временный): " . implode(', ', array_keys($this->metricsCache)),
-            __FILE__,
-            __LINE__
-        );
+        $this->logger->info("Кэш метрик Grafana инициализирован (временный): " . implode(', ', array_keys($this->metricsCache)));
     }
 
     /**
@@ -231,7 +219,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
      */
     private function httpRequest(string $method, string $url, ?string $body = null): ?string
     {
-        $this->logger->info("Grafana HTTP Request → $method $url\nBody: " . ($body ?? 'none'), __FILE__, __LINE__);
+        $this->logger->info("Grafana HTTP Request → $method $url\nBody: " . ($body ?? 'none'));
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -245,11 +233,11 @@ class GrafanaProxyClient implements GrafanaClientInterface
         curl_close($ch);
 
         if ($err || $code >= 400) {
-            $this->logger->error("Grafana HTTP Error → $method $url\nCode: $code, Error: " . ($err ?: 'HTTP status >= 400'), __FILE__, __LINE__);
+            $this->logger->error("Grafana HTTP Error → $method $url\nCode: $code, Error: " . ($err ?: 'HTTP status >= 400'));
             return null;
         }
 
-        $this->logger->info("Grafana HTTP Response ← Code: $code\nBody (truncated): " . substr($resp ?? '', 0, 1000), __FILE__, __LINE__);
+        $this->logger->info("Grafana HTTP Response ← Code: $code\nBody (truncated): " . substr($resp ?? '', 0, 1000));
         return $resp;
     }
 
@@ -298,7 +286,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
     public function createDangerDashboard(string $metricName, string $folderUid): string|false
     {
         if (!isset($this->metricsCache[$metricName])) {
-            $this->logger->error("Метрика не найдена в кэше: $metricName", __FILE__, __LINE__);
+            $this->logger->error("Метрика не найдена в кэше: $metricName");
             return false;
         }
 
@@ -307,7 +295,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
         // Получаем JSON дашборда
         $dashJson = $this->httpRequest('GET', "{$this->grafanaUrl}/api/dashboards/uid/{$info['dashboard_uid']}");
         if (!$dashJson) {
-            $this->logger->error("Не удалось получить JSON дашборда {$info['dashboard_uid']}", __FILE__, __LINE__);
+            $this->logger->error("Не удалось получить JSON дашборда {$info['dashboard_uid']}");
             return false;
         }
 
@@ -322,13 +310,13 @@ class GrafanaProxyClient implements GrafanaClientInterface
         }
 
         if (!$targetPanel || empty($targetPanel['targets'])) {
-            $this->logger->warn("Панель {$info['panel_id']} не найдена или без targets", __FILE__, __LINE__);
+            $this->logger->warn("Панель {$info['panel_id']} не найдена или без targets");
             return false;
         }
 
         $originalExpr = $targetPanel['targets'][0]['expr'] ?? '';
         if (empty($originalExpr)) {
-            $this->logger->warn("Expr не найден в панели {$info['panel_id']} для создания danger dashboard, пропуск", __FILE__, __LINE__);
+            $this->logger->warn("Expr не найден в панели {$info['panel_id']} для создания danger dashboard, пропуск");
             return false;
         }
 
@@ -532,7 +520,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
         ), true);
 
         if (json_last_error() !== JSON_ERROR_NONE) {
-            $this->logger->error("Ошибка парсинга panel config: " . json_last_error_msg(), __FILE__, __LINE__);
+            $this->logger->error("Ошибка парсинга panel config: " . json_last_error_msg());
             return false;
         }
 
@@ -565,20 +553,20 @@ class GrafanaProxyClient implements GrafanaClientInterface
         $body = json_encode($newDashboard);
         $resp = $this->httpRequest('POST', "{$this->grafanaUrl}/api/dashboards/db", $body);
         if (!$resp) {
-            $this->logger->error("Ошибка создания дашборда для $metricName", __FILE__, __LINE__);
+            $this->logger->error("Ошибка создания дашборда для $metricName");
             return false;
         }
 
         $responseData = json_decode($resp, true);
         $uid = $responseData['uid'] ?? null;
         if (!$uid) {
-            $this->logger->error("UID не получен при создании дашборда: " . json_encode($responseData), __FILE__, __LINE__);
+            $this->logger->error("UID не получен при создании дашборда: " . json_encode($responseData));
             return false;
         }
 
         $dashboardTitle = $responseData['title'] ?? "Danger Alert for $metricName";
         $dashboardUrl = $this->grafanaUrl . "/d/" . $uid . "/" . rawurlencode($dashboardTitle);
-        $this->logger->info("Создан дашборд для опасной метрики $metricName: $dashboardUrl", __FILE__, __LINE__);
+        $this->logger->info("Создан дашборд для опасной метрики $metricName: $dashboardUrl");
         return $dashboardUrl;
     }
 
@@ -588,7 +576,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
     public function getQueryForMetric(string $metricName): string|false
     {
         if (!isset($this->metricsCache[$metricName])) {
-            $this->logger->error("Метрика не найдена в кэше: $metricName", __FILE__, __LINE__);
+            $this->logger->error("Метрика не найдена в кэше: $metricName");
             return false;
         }
 
@@ -597,7 +585,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
         // Получаем JSON дашборда
         $dashJson = $this->httpRequest('GET', "{$this->grafanaUrl}/api/dashboards/uid/{$info['dashboard_uid']}");
         if (!$dashJson) {
-            $this->logger->error("Не удалось получить JSON дашборда {$info['dashboard_uid']}", __FILE__, __LINE__);
+            $this->logger->error("Не удалось получить JSON дашборда {$info['dashboard_uid']}");
             return false;
         }
 
@@ -612,17 +600,17 @@ class GrafanaProxyClient implements GrafanaClientInterface
         }
 
         if (!$targetPanel || empty($targetPanel['targets'])) {
-            $this->logger->warn("Панель {$info['panel_id']} не найдена или без targets", __FILE__, __LINE__);
+            $this->logger->warn("Панель {$info['panel_id']} не найдена или без targets");
             return false;
         }
 
         $expr = $targetPanel['targets'][0]['expr'] ?? '';
         if (empty($expr)) {
-            $this->logger->error("Expr не найден в панели {$info['panel_id']}", __FILE__, __LINE__);
+            $this->logger->error("Expr не найден в панели {$info['panel_id']}");
             return false;
         }
 
-        $this->logger->info("Получен expr для $metricName: $expr", __FILE__, __LINE__);
+        $this->logger->info("Получен expr для $metricName: $expr");
         return $expr;
     }
 }
