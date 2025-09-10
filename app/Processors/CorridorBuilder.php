@@ -36,13 +36,19 @@ class CorridorBuilder
         $this->dftProcessor = $container->get(DFTProcessorInterface::class);
         $this->responseFormatter = new ResponseFormatter($this->config);
         $this->anomalyDetector = new AnomalyDetector($this->config, $this->logger);
-        $this->statsCacheManager = new StatsCacheManager(
-            $this->config, $this->logger,
-            $this->cacheManager,
+        $statsCalculator = new StatsCalculator(
+            $this->config,
+            $this->logger,
             $this->dataProcessor,
             $this->dftProcessor,
-            $this->anomalyDetector,
-            $this->responseFormatter
+            $this->anomalyDetector
+        );
+        $this->statsCacheManager = new StatsCacheManager(
+            $this->config,
+            $this->logger,
+            $this->cacheManager,
+            $this->responseFormatter,
+            $statsCalculator
         );
 
         PerformanceMonitor::init(
@@ -109,12 +115,12 @@ class CorridorBuilder
 
             if ($needRecalc) {
                 $cached = $this->statsCacheManager->recalculateStats(
-                    $query, $labelsJson, $orig, $longGrouped[$labelsJson] ?? [], $finalConfig
+                    $query, $labelsJson, $orig, $longGrouped[$labelsJson] ?? [], $this->config
                 );
             }
 
             // если мало истории — placeholder-режим
-            if (count($longGrouped[$labelsJson] ?? []) < ($finalConfig['corrdor_params']['min_data_points'] ?? 10)) {
+            if (count($longGrouped[$labelsJson] ?? []) < ($this->config['corrdor_params']['min_data_points'] ?? 10)) {
                 $results[] = $this->statsCacheManager->processInsufficientData(
                     $query, $labelsJson, $orig, $start, $end, $step
                 );
@@ -146,18 +152,18 @@ class CorridorBuilder
                 $upper, $lower,
                 $cached['dft_upper']['coefficients'][0]['amplitude'] ?? 0,
                 $cached['dft_lower']['coefficients'][0]['amplitude'] ?? 0,
-                $finalConfig, $this->logger
+                $this->config, $this->logger
             );
 
             // аномалии
             $currStats = $this->anomalyDetector->calculateAnomalyStats(
                 $orig, $cU, $cL,
-                $finalConfig['corrdor_params']['default_percentiles'],
+                $this->config['corrdor_params']['default_percentiles'],
                 true
             );
 
             // concern-метрики
-            $wsize = $finalConfig['corrdor_params']['window_size'];
+            $wsize = $this->config['corrdor_params']['window_size'];
             $aboveC = $this->anomalyDetector->calculateIntegralMetric(
                 $currStats['above'], $cached['meta']['anomaly_stats']['above'] ?? []
             );
@@ -190,6 +196,6 @@ class CorridorBuilder
         }
 
         PerformanceMonitor::end('total_processing');
-        return $this->responseFormatter->formatForGrafana($results, $query, $finalConfig['dashboard']['show_metrics'] ?? $showMetrics);
+        return $this->responseFormatter->formatForGrafana($results, $query, $this->config['dashboard']['show_metrics'] ?? $showMetrics);
     }
 }

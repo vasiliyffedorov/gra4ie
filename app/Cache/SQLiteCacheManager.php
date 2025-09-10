@@ -42,9 +42,9 @@ class SQLiteCacheManager implements CacheManagerInterface
         return $this->ioManager->generateCacheKey($query, $labelsJson);
     }
 
-    public function saveToCache(string $query, string $labelsJson, array $data, array $currentConfig): bool
+    public function saveToCache(string $query, string $labelsJson, array $payload, array $config): void
     {
-        return $this->ioManager->saveToCache($query, $labelsJson, $data, $currentConfig);
+        $this->ioManager->saveToCache($query, $labelsJson, $payload, $config);
     }
 
     public function loadFromCache(string $query, string $labelsJson): ?array
@@ -62,9 +62,9 @@ class SQLiteCacheManager implements CacheManagerInterface
         return $this->ioManager->checkCacheExists($query, $labelsJson);
     }
 
-    public function shouldRecreateCache(string $query, string $labelsJson, array $currentConfig): bool
+    public function shouldRecreateCache(string $query, string $labelsJson, array $config): bool
     {
-        return $this->ioManager->shouldRecreateCache($query, $labelsJson, $currentConfig);
+        return $this->ioManager->shouldRecreateCache($query, $labelsJson, $config);
     }
 
 

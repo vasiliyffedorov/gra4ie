@@ -5,6 +5,7 @@ require_once __DIR__ . '/../Interfaces/LoggerInterface.php';
 require_once __DIR__ . '/../Interfaces/GrafanaClientInterface.php';
 require_once __DIR__ . '/../Interfaces/CacheManagerInterface.php';
 require_once __DIR__ . '/../Interfaces/DFTProcessorInterface.php';
+require_once __DIR__ . '/../Processors/FourierTransformer.php';
 require_once __DIR__ . '/../Utilities/Logger.php';
 require_once __DIR__ . '/../Clients/GrafanaProxyClient.php';
 require_once __DIR__ . '/../Cache/CacheManagerFactory.php';
@@ -49,7 +50,7 @@ class Container
         };
 
         // FourierTransformer
-        $this->services['FourierTransformerInterface'] = function () {
+        $this->services[FourierTransformerInterface::class] = function () {
             $logger = $this->get(LoggerInterface::class);
             return new FourierTransformer($logger);
         };
@@ -64,7 +65,7 @@ class Container
         $this->services['config'] = fn() => $this->config;
     }
 
-    public function get(string $id): object
+    public function get(string $id): mixed
     {
         if (isset($this->instances[$id])) {
             return $this->instances[$id];
@@ -75,7 +76,7 @@ class Container
         }
 
         $service = $this->services[$id]();
-        if ($service instanceof object) {
+        if (is_object($service)) {
             $this->instances[$id] = $service;
         }
 

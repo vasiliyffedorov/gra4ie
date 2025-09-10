@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../Utilities/Logger.php';
 
-class GrafanaProxyClient
+class GrafanaProxyClient implements GrafanaClientInterface
 {
     private string $grafanaUrl;
     private string $apiToken;
@@ -15,7 +15,7 @@ class GrafanaProxyClient
     /** тип последнего datasource, на который сделали queryRange */
     private string $lastDataSourceType = 'unknown';
 
-    public function __construct(string $grafanaUrl, string $apiToken, Logger $logger, array $blacklistDatasourceIds = [])
+    public function __construct(string $grafanaUrl, string $apiToken, LoggerInterface $logger, array $blacklistDatasourceIds = [])
     {
         $this->grafanaUrl = rtrim($grafanaUrl, '/');
         $this->apiToken   = $apiToken;

@@ -1,9 +1,9 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/../Utilities/LoggerInterface.php';
+require_once __DIR__ . '/../Interfaces/LoggerInterface.php';
 require_once __DIR__ . '/DataProcessor.php';
-require_once __DIR__ . '/DFTProcessorInterface.php';
+require_once __DIR__ . '/../Interfaces/DFTProcessorInterface.php';
 require_once __DIR__ . '/AnomalyDetector.php';
 require_once __DIR__ . '/CorridorWidthEnsurer.php';
 
@@ -22,6 +22,11 @@ class StatsCalculator
         $this->dataProcessor = $dataProcessor;
         $this->dftProcessor = $dftProcessor;
         $this->anomalyDetector = $anomalyDetector;
+    }
+
+    public function updateConfig(array $config): void
+    {
+        $this->config = $config;
     }
 
     public function recalculateStats(string $query, string $labelsJson, array $liveData, array $historyData): array

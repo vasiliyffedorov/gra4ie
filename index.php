@@ -172,6 +172,7 @@ if ($method==='POST' && $path==='/api/v1/query_range') {
     $step  = (int)($params['step']  ?? 60);
 
     // и строим коридор
+    require_once __DIR__ . '/app/Processors/CorridorBuilder.php';
     $corridorBuilder = new CorridorBuilder($container);
     $corridorBuilder->updateConfig($finalConfig);
     $result = $corridorBuilder->build(
