@@ -60,6 +60,16 @@ class SQLiteCacheDatabase
                 UNIQUE(query_id, metric_hash)
             )
         ");
+        $this->db->exec("
+            CREATE TABLE IF NOT EXISTS grafana_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                metrics_key TEXT UNIQUE NOT NULL DEFAULT 'global_metrics',
+                metrics_json TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ");
+        $this->db->exec("INSERT OR IGNORE INTO grafana_metrics (metrics_key, metrics_json) VALUES ('global_metrics', '{}')");
         $this->db->exec("CREATE INDEX IF NOT EXISTS idx_queries_query ON queries(query)");
         $this->db->exec("CREATE INDEX IF NOT EXISTS idx_dft_cache_query_id ON dft_cache(query_id)");
         $this->db->exec("CREATE INDEX IF NOT EXISTS idx_dft_cache_metric_hash ON dft_cache(metric_hash)");
@@ -111,6 +121,23 @@ class SQLiteCacheDatabase
             $this->logger->warn("Добавление столбца lower_trend_json в таблицу dft_cache.", __FILE__, __LINE__);
             $this->db->exec("ALTER TABLE dft_cache ADD COLUMN lower_trend_json TEXT");
             $this->logger->info("Столбец lower_trend_json добавлен в таблицу dft_cache.", __FILE__, __LINE__);
+        }
+
+        // Migrate for grafana_metrics table
+        $tableExists = $this->db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='grafana_metrics'")->fetchColumn();
+        if (!$tableExists) {
+            $this->logger->warn("Создание таблицы grafana_metrics.", __FILE__, __LINE__);
+            $this->db->exec("
+                CREATE TABLE grafana_metrics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    metrics_key TEXT UNIQUE NOT NULL DEFAULT 'global_metrics',
+                    metrics_json TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ");
+            $this->db->exec("INSERT INTO grafana_metrics (metrics_key, metrics_json) VALUES ('global_metrics', '{}')");
+            $this->logger->info("Таблица grafana_metrics создана и инициализирована.", __FILE__, __LINE__);
         }
     }
 }

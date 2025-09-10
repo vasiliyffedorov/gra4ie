@@ -40,12 +40,14 @@ class Container
         // GrafanaClient
         $this->services[GrafanaClientInterface::class] = function () {
             $logger = $this->get(LoggerInterface::class);
+            $cacheManager = $this->get(CacheManagerInterface::class);
             $blacklist = $this->config['blacklist_datasource_ids'] ?? [];
             return new GrafanaProxyClient(
                 $this->config['grafana_url'],
                 $this->config['grafana_api_token'],
                 $logger,
-                $blacklist
+                $blacklist,
+                $cacheManager
             );
         };
 

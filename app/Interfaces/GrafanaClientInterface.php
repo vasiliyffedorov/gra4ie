@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 interface GrafanaClientInterface
 {
-    public function __construct(string $grafanaUrl, string $apiToken, LoggerInterface $logger, array $blacklistDatasourceIds = []);
+    public function __construct(string $grafanaUrl, string $apiToken, LoggerInterface $logger, array $blacklistDatasourceIds = [], ?CacheManagerInterface $cacheManager = null);
 
     public function getMetricNames(): array;
 
