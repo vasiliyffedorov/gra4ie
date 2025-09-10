@@ -197,6 +197,10 @@ class GrafanaProxyClient implements GrafanaClientInterface
                 if (empty($p['id'])) {
                     continue;
                 }
+                if (empty($p['targets'])) {
+                    $this->logger->debug("Пропущена панель {$p['id']} в дашборде $uid: без targets", __FILE__, __LINE__);
+                    continue;
+                }
                 // Check if the panel's datasource is in the blacklist
                 $datasourceId = $p['targets'][0]['datasource']['uid'] ?? null;
                 if ($datasourceId && in_array($datasourceId, $this->blacklistDatasourceIds)) {
@@ -285,6 +289,341 @@ class GrafanaProxyClient implements GrafanaClientInterface
             }
         }
         return $out;
+    }
+
+    /**
+     * Создает дашборд с оверрайдом для опасной метрики в указанной папке.
+     * Возвращает URL дашборда или false при ошибке.
+     */
+    public function createDangerDashboard(string $metricName, string $folderUid): string|false
+    {
+        if (!isset($this->metricsCache[$metricName])) {
+            $this->logger->error("Метрика не найдена в кэше: $metricName", __FILE__, __LINE__);
+            return false;
+        }
+
+        $info = $this->metricsCache[$metricName];
+
+        // Получаем JSON дашборда
+        $dashJson = $this->httpRequest('GET', "{$this->grafanaUrl}/api/dashboards/uid/{$info['dashboard_uid']}");
+        if (!$dashJson) {
+            $this->logger->error("Не удалось получить JSON дашборда {$info['dashboard_uid']}", __FILE__, __LINE__);
+            return false;
+        }
+
+        $dashData = json_decode($dashJson, true);
+        $panels = $dashData['dashboard']['panels'] ?? [];
+        $targetPanel = null;
+        foreach ($panels as $p) {
+            if ((string)$p['id'] === $info['panel_id']) {
+                $targetPanel = $p;
+                break;
+            }
+        }
+
+        if (!$targetPanel || empty($targetPanel['targets'])) {
+            $this->logger->warn("Панель {$info['panel_id']} не найдена или без targets", __FILE__, __LINE__);
+            return false;
+        }
+
+        $originalExpr = $targetPanel['targets'][0]['expr'] ?? '';
+        if (empty($originalExpr)) {
+            $this->logger->warn("Expr не найден в панели {$info['panel_id']} для создания danger dashboard, пропуск", __FILE__, __LINE__);
+            return false;
+        }
+
+        // URL оригинальной панели
+        $panelUrl = sprintf(
+            '%s/d/%s/%s?viewPanel=%s',
+            $this->grafanaUrl,
+            $info['dashboard_uid'],
+            rawurlencode($info['dash_title']),
+            $info['panel_id']
+        );
+
+        // Шаблон панели из задачи
+        $panelTemplate = '{
+  "datasource": {
+    "type": "prometheus",
+    "uid": "ceh9u3ymlpdz4b"
+  },
+  "fieldConfig": {
+    "defaults": {
+      "custom": {
+        "drawStyle": "line",
+        "lineInterpolation": "linear",
+        "barAlignment": 0,
+        "lineWidth": 2,
+        "fillOpacity": 0,
+        "gradientMode": "none",
+        "spanNulls": false,
+        "insertNulls": false,
+        "showPoints": "auto",
+        "pointSize": 5,
+        "stacking": {
+          "mode": "none",
+          "group": "A"
+        },
+        "axisPlacement": "auto",
+        "axisLabel": "",
+        "axisColorMode": "text",
+        "axisBorderShow": false,
+        "scaleDistribution": {
+          "type": "linear"
+        },
+        "axisCenteredZero": false,
+        "hideFrom": {
+          "tooltip": false,
+          "viz": false,
+          "legend": false
+        },
+        "thresholdsStyle": {
+          "mode": "off"
+        }
+      },
+      "color": {
+        "mode": "palette-classic"
+      },
+      "mappings": [],
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          {
+            "color": "green",
+            "value": null
+          },
+          {
+            "color": "red",
+            "value": 80
+          }
+        ]
+      }
+    },
+    "overrides": [
+      {
+        "matcher": {
+          "id": "byName",
+          "options": "dft_lower"
+        },
+        "properties": [
+          {
+            "id": "custom.lineWidth",
+            "value": 0
+          },
+          {
+            "id": "custom.stacking",
+            "value": {
+              "group": "A",
+              "mode": "normal"
+            }
+          }
+        ]
+      },
+      {
+        "matcher": {
+          "id": "byName",
+          "options": "dft_range"
+        },
+        "properties": [
+          {
+            "id": "custom.stacking",
+            "value": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          {
+            "id": "custom.fillOpacity",
+            "value": 23
+          },
+          {
+            "id": "custom.fillBelowTo",
+            "value": "dft_lower"
+          },
+          {
+            "id": "custom.lineWidth",
+            "value": 0
+          },
+          {
+            "id": "color",
+            "value": {
+              "mode": "fixed"
+            }
+          }
+        ]
+      },
+      {
+        "__systemRef": "hideSeriesFrom",
+        "matcher": {
+          "id": "byNames",
+          "options": {
+            "mode": "exclude",
+            "names": [
+              "{__name__=\"original\", original_query=\"PLACEHOLDER_QUERY\", panel_url=\"PLACEHOLDER_URL\"}",
+              "{__name__=\"dft_lower\", original_query=\"PLACEHOLDER_QUERY\", panel_url=\"PLACEHOLDER_URL\"}",
+              "{__name__=\"dft_range\", original_query=\"PLACEHOLDER_QUERY\", panel_url=\"PLACEHOLDER_URL\"}"
+            ],
+            "prefix": "All except:",
+            "readOnly": true
+          }
+        },
+        "properties": [
+          {
+            "id": "custom.hideFrom",
+            "value": {
+              "legend": false,
+              "tooltip": false,
+              "viz": true
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "gridPos": {
+    "h": 12,
+    "w": 24,
+    "x": 0,
+    "y": 12
+  },
+  "id": 2,
+  "options": {
+    "tooltip": {
+      "mode": "single",
+      "sort": "none",
+      "maxHeight": 600
+    },
+    "legend": {
+      "showLegend": true,
+      "displayMode": "table",
+      "placement": "bottom",
+      "calcs": [
+        "lastNotNull"
+      ]
+    }
+  },
+  "targets": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "ceh9u3ymlpdz4b"
+      },
+      "disableTextWrap": false,
+      "editorMode": "builder",
+      "expr": "PLACEHOLDER_EXPR",
+      "fullMetaSearch": false,
+      "includeNullMetadata": true,
+      "instant": false,
+      "legendFormat": "__auto",
+      "range": true,
+      "refId": "A",
+      "useBackend": false
+    }
+  ],
+  "title": "PLACEHOLDER_TITLE",
+  "type": "timeseries"
+}';
+
+        // Заменяем плейсхолдеры
+        $panelConfig = json_decode(str_replace(
+            ['PLACEHOLDER_EXPR', 'PLACEHOLDER_QUERY', 'PLACEHOLDER_URL', 'PLACEHOLDER_TITLE'],
+            [$originalExpr, $metricName, $panelUrl, "Danger Alert: $metricName"],
+            $panelTemplate
+        ), true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            $this->logger->error("Ошибка парсинга panel config: " . json_last_error_msg(), __FILE__, __LINE__);
+            return false;
+        }
+
+        // Новый дашборд
+        $newDashboard = [
+            'dashboard' => [
+                'title' => "Danger Alert for $metricName",
+                'panels' => [$panelConfig],
+                'uid' => null,
+                'folderUid' => $folderUid,
+                'tags' => ['danger-alert'],
+                'time' => [
+                    'from' => 'now-6h',
+                    'to' => 'now'
+                ],
+                'timezone' => 'browser',
+                'refresh' => '5s',
+                'schemaVersion' => 39,
+                'version' => 1,
+                'links' => [],
+                'style' => 'dark',
+                'fiscalYearStartMonth' => 0,
+                'liveNow' => false,
+                'weekStart' => ''
+            ],
+            'folderUid' => $folderUid,
+            'overwrite' => false
+        ];
+
+        $body = json_encode($newDashboard);
+        $resp = $this->httpRequest('POST', "{$this->grafanaUrl}/api/dashboards/db", $body);
+        if (!$resp) {
+            $this->logger->error("Ошибка создания дашборда для $metricName", __FILE__, __LINE__);
+            return false;
+        }
+
+        $responseData = json_decode($resp, true);
+        $uid = $responseData['uid'] ?? null;
+        if (!$uid) {
+            $this->logger->error("UID не получен при создании дашборда: " . json_encode($responseData), __FILE__, __LINE__);
+            return false;
+        }
+
+        $dashboardTitle = $responseData['title'] ?? "Danger Alert for $metricName";
+        $dashboardUrl = $this->grafanaUrl . "/d/" . $uid . "/" . rawurlencode($dashboardTitle);
+        $this->logger->info("Создан дашборд для опасной метрики $metricName: $dashboardUrl", __FILE__, __LINE__);
+        return $dashboardUrl;
+    }
+
+    /**
+     * Возвращает PromQL запрос (expr) для указанной метрики.
+     */
+    public function getQueryForMetric(string $metricName): string|false
+    {
+        if (!isset($this->metricsCache[$metricName])) {
+            $this->logger->error("Метрика не найдена в кэше: $metricName", __FILE__, __LINE__);
+            return false;
+        }
+
+        $info = $this->metricsCache[$metricName];
+
+        // Получаем JSON дашборда
+        $dashJson = $this->httpRequest('GET', "{$this->grafanaUrl}/api/dashboards/uid/{$info['dashboard_uid']}");
+        if (!$dashJson) {
+            $this->logger->error("Не удалось получить JSON дашборда {$info['dashboard_uid']}", __FILE__, __LINE__);
+            return false;
+        }
+
+        $dashData = json_decode($dashJson, true);
+        $panels = $dashData['dashboard']['panels'] ?? [];
+        $targetPanel = null;
+        foreach ($panels as $p) {
+            if ((string)$p['id'] === $info['panel_id']) {
+                $targetPanel = $p;
+                break;
+            }
+        }
+
+        if (!$targetPanel || empty($targetPanel['targets'])) {
+            $this->logger->warn("Панель {$info['panel_id']} не найдена или без targets", __FILE__, __LINE__);
+            return false;
+        }
+
+        $expr = $targetPanel['targets'][0]['expr'] ?? '';
+        if (empty($expr)) {
+            $this->logger->error("Expr не найден в панели {$info['panel_id']}", __FILE__, __LINE__);
+            return false;
+        }
+
+        $this->logger->info("Получен expr для $metricName: $expr", __FILE__, __LINE__);
+        return $expr;
     }
 }
 ?>

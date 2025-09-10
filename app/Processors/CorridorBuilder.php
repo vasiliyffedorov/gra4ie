@@ -70,12 +70,13 @@ class CorridorBuilder
      * @param int    $start
      * @param int    $end
      * @param int    $step
+     * @param ?array $overrideShowMetrics
      * @return array  результат для Grafana
      */
-    public function build(string $query, int $start, int $end, int $step): array
+    public function build(string $query, int $start, int $end, int $step, ?array $overrideShowMetrics = null): array
     {
         // берем show_metrics прямо из текущего конфига (override может туда писать)
-        $showMetrics = $this->config['dashboard']['show_metrics'];
+        $showMetrics = $overrideShowMetrics ?? $this->config['dashboard']['show_metrics'];
 
         PerformanceMonitor::start('total_processing');
         $results = [];
@@ -196,6 +197,6 @@ class CorridorBuilder
         }
 
         PerformanceMonitor::end('total_processing');
-        return $this->responseFormatter->formatForGrafana($results, $query, $this->config['dashboard']['show_metrics'] ?? $showMetrics);
+        return $this->responseFormatter->formatForGrafana($results, $query, $showMetrics);
     }
 }

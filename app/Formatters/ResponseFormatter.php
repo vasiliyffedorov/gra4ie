@@ -37,7 +37,7 @@ class ResponseFormatter {
         ];
     }
 
-    public function formatForGrafana(array $results, string $query, ?array $filter = null): array {
+    public function formatForGrafana(array $results, string $query, string|array|null $filter = null): array {
         $formatted = [
             'status' => 'success',
             'data' => [
@@ -48,12 +48,11 @@ class ResponseFormatter {
 
         $metricsToShow = $filter ?? $this->showMetrics;
         if (is_string($metricsToShow)) {
-            $this->anomalyDetector->logger->warn(
-                "dashboard.show_metrics should be a comma-separated list (e.g., 'dft_lower,anomaly_concern'). Received: '$metricsToShow'. Treating as single metric.",
-                __FILE__,
-                __LINE__
-            );
-            $metricsToShow = [$metricsToShow];
+            $trimmed = array_map('trim', explode(',', $metricsToShow));
+            $metricsToShow = array_filter($trimmed); // Удаляем пустые
+            if (empty($metricsToShow)) {
+                $metricsToShow = [$metricsToShow];
+            }
         }
 
         if (!is_array($metricsToShow)) {
@@ -272,6 +271,19 @@ class ResponseFormatter {
                 }
             }
         }
+    }
+
+    /**
+     * Вычисляет верхнюю и нижнюю границы для данных (placeholder для недостатка истории).
+     */
+    public function calculateBounds(array $data, int $start, int $end, int $step): array {
+        $upper = [];
+        $lower = [];
+        for ($t = $start; $t <= $end; $t += $step) {
+            $upper[] = ['time' => $t, 'value' => 0];
+            $lower[] = ['time' => $t, 'value' => 0];
+        }
+        return ['upper' => $upper, 'lower' => $lower];
     }
 
     public function resampleDFT(array $dftData, int $start, int $end, int $step): array {
