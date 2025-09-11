@@ -218,7 +218,7 @@ class SQLiteCacheIO
             }
             $currentConfigHash = $this->configManager->createConfigHash($currentConfig);
             if ($row['config_hash'] !== $currentConfigHash) {
-                $this->logger->info("Конфигурация изменилась для запроса: $query. Текущий хеш: $currentConfigHash, сохраненный: {$row['config_hash']}. Требуется пересоздание кэша.", __FILE__, __LINE__);
+                $this->logger->legacyInfo("Конфигурация изменилась для запроса: $query. Текущий хеш: $currentConfigHash, сохраненный: {$row['config_hash']}. Требуется пересоздание кэша.", __FILE__, __LINE__);
                 return true;
             }
             $age = time() - $row['created_at'];
@@ -227,7 +227,7 @@ class SQLiteCacheIO
                 return true;
             }
             if ($row['dft_rebuild_count'] > ($this->config['cache']['max_rebuild_count'] ?? 10)) {
-                $this->logger->warn("Высокое значение dft_rebuild_count ({$row['dft_rebuild_count']}) для запроса: $query, метрика: $labelsJson. Возможен конфликт конфигураций.", __FILE__, __LINE__);
+                $this->logger->legacyWarn("Высокое значение dft_rebuild_count ({$row['dft_rebuild_count']}) для запроса: $query, метрика: $labelsJson. Возможен конфликт конфигураций.", __FILE__, __LINE__);
             }
             return false;
         } catch (PDOException $e) {
