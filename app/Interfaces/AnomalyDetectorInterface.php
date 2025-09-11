@@ -12,10 +12,11 @@ interface AnomalyDetectorInterface
         array $upperBound,
         array $lowerBound,
         ?array $percentileConfig = null,
-        bool $raw = false
+        bool $raw = false,
+        bool $isHistorical = false
     ): array;
 
-    public function calculateIntegralMetric(array $currentStats, array $historicalStats): float;
+    public function calculateIntegralMetric(array $currentStats, array $historicalStats): array;
 
-    public function calculateIntegralMetricSum(array $currentStats, array $historicalStats, int $windowSize): float;
+    public function calculateIntegralMetricSum(array $currentStats, array $historicalStats, int $windowSize): array;
 }

@@ -36,7 +36,8 @@ class AnomalyDetector implements AnomalyDetectorInterface {
         array $upperBound,
         array $lowerBound,
         ?array $percentileConfig = null,
-        bool $raw = false
+        bool $raw = false,
+        bool $isHistorical = false
     ): array {
         if (empty($dataPoints) || empty($upperBound) || empty($lowerBound)) {
             $this->logger->warn(
@@ -115,28 +116,35 @@ class AnomalyDetector implements AnomalyDetectorInterface {
         $combined['time_outside_percent'] = round(($above['time_outside_percent'] + $below['time_outside_percent']) / 2, 2);
         $combined['anomaly_count'] = $above['anomaly_count'] + $below['anomaly_count'];
 
-        if ($raw) {
-            $percentiles = $percentileConfig ?? [75];
-            $above['durations'] = $this->calculatePercentileValues($above['durations'], $percentiles);
-            $below['sizes'] = $this->calculatePercentileValues($below['sizes'], $percentiles);
+        if ($isHistorical) {
+            $above['durations'] = $this->compressHistory($above['durations']);
+            $above['sizes'] = $this->compressHistory($above['sizes']);
+            $below['durations'] = $this->compressHistory($below['durations']);
+            $below['sizes'] = $this->compressHistory($below['sizes']);
             return [
                 'above' => $above,
                 'below' => $below,
                 'combined' => $combined
             ];
+        } elseif ($raw) {
+            return [
+                'above' => $above,
+                'below' => $below,
+                'combined' => $combined
+            ];
+        } else {
+            return [
+                'above' => [
+                    'time_outside_percent' => $above['time_outside_percent'],
+                    'anomaly_count' => $above['anomaly_count']
+                ],
+                'below' => [
+                    'time_outside_percent' => $below['time_outside_percent'],
+                    'anomaly_count' => $below['anomaly_count']
+                ],
+                'combined' => $combined
+            ];
         }
-
-        return [
-            'above' => [
-                'time_outside_percent' => $above['time_outside_percent'],
-                'anomaly_count' => $above['anomaly_count']
-            ],
-            'below' => [
-                'time_outside_percent' => $below['time_outside_percent'],
-                'anomaly_count' => $below['anomaly_count']
-            ],
-            'combined' => $combined
-        ];
     }
 
     /**
@@ -174,33 +182,93 @@ class AnomalyDetector implements AnomalyDetectorInterface {
 
         return $results;
     }
+     /**
+      * Сжимает историю аномалий согласно логике: <=12 - pad нулями до 12; >12 - вычисляет перцентили из cache.percentiles
+      */
+     private function compressHistory(array $values): array
+     {
+         $percentilesStr = $this->config['cache']['percentiles'] ?? "0,10,20,30,40,50,60,70,80,90,95,100";
+         if (is_array($percentilesStr)) $percentilesStr = implode(',', $percentilesStr);
+         $pcts = array_map(fn($s) => (int)trim($s), explode(',', $percentilesStr));
+         $numPcts = count($pcts); // 12
+
+         if (count($values) <= $numPcts) {
+             sort($values);
+             while (count($values) < $numPcts) {
+                 $values[] = 0;
+             }
+             return $values;
+         } else {
+             sort($values);
+             return $this->calculatePercentileValues($values, $pcts);
+         }
+     }
 
     /**
-     * Рассчитывает интегральную метрику для аномалий.
+     * Рассчитывает интегральную метрику для аномалий (separate for duration and size).
      *
-     * @param array $currentStats Текущие статистики аномалий (durations или sizes)
-     * @param array $historicalStats Исторические статистики аномалий
-     * @return float Интегральная метрика (сумма отклонений)
+     * @param array $currentStats Текущие статистики аномалий {durations: [], sizes: []}
+     * @param array $historicalStats Исторические сжатые статистики аномалий
+     * @return array {duration_concern: float, size_concern: float, total_concern: float}
      */
-    public function calculateIntegralMetric(array $currentStats, array $historicalStats): float
+    public function calculateIntegralMetric(array $currentStats, array $historicalStats): array
     {
-        $currentPercent = $currentStats['time_outside_percent'] ?? 0;
-        $historicalPercent = $historicalStats['time_outside_percent'] ?? 0;
-        return abs($currentPercent - $historicalPercent);
+        $durationMult = $this->config['corrdor_params']['default_percentiles']['duration_multiplier'] ?? 1;
+        $sizeMult = $this->config['corrdor_params']['default_percentiles']['size_multiplier'] ?? 1;
+        $durationP = $this->config['corrdor_params']['default_percentiles']['duration'] ?? 75;
+        $sizeP = $this->config['corrdor_params']['default_percentiles']['size'] ?? 75;
+
+        $durConcern = 0.0;
+        if (!empty($currentStats['durations']) && !empty($historicalStats['durations'])) {
+            $currMaxDur = max($currentStats['durations']);
+            $durIndex = (int)($durationP / 100 * 11); // for 12 elements
+            $histDur = $historicalStats['durations'][$durIndex] ?? 0;
+            if ($histDur > 0) {
+                $ratio = $currMaxDur / ($histDur * $durationMult);
+                $durConcern = max(0, $ratio - 1);
+            } elseif ($currMaxDur > 0) {
+                $durConcern = 1.0; // if no history, any deviation is concern
+            }
+        }
+
+        $sizeConcern = 0.0;
+        if (!empty($currentStats['sizes']) && !empty($historicalStats['sizes'])) {
+            $currMaxSize = max($currentStats['sizes']);
+            $sizeIndex = (int)($sizeP / 100 * 11);
+            $histSize = $historicalStats['sizes'][$sizeIndex] ?? 0;
+            if ($histSize > 0) {
+                $ratio = $currMaxSize / ($histSize * $sizeMult);
+                $sizeConcern = max(0, $ratio - 1);
+            } elseif ($currMaxSize > 0) {
+                $sizeConcern = 1.0;
+            }
+        }
+
+        $totalConcern = $durConcern + $sizeConcern;
+
+        return [
+            'duration_concern' => $durConcern,
+            'size_concern' => $sizeConcern,
+            'total_concern' => $totalConcern
+        ];
     }
 
     /**
-     * Рассчитывает сумму интегральной метрики с учетом размера окна.
+     * Рассчитывает сумму интегральной метрики с учетом размера окна (separate for duration and size).
      *
      * @param array $currentStats Текущие статистики аномалий
      * @param array $historicalStats Исторические статистики аномалий
      * @param int $windowSize Размер окна
-     * @return float Сумма интегральной метрики
+     * @return array {duration_concern_sum: float, size_concern_sum: float, total_concern_sum: float}
      */
-    public function calculateIntegralMetricSum(array $currentStats, array $historicalStats, int $windowSize): float
+    public function calculateIntegralMetricSum(array $currentStats, array $historicalStats, int $windowSize): array
     {
-        $metric = $this->calculateIntegralMetric($currentStats, $historicalStats);
-        return $metric * $windowSize; // Теперь % * size, но можно скорректировать если нужно
+        $concerns = $this->calculateIntegralMetric($currentStats, $historicalStats);
+        return [
+            'duration_concern_sum' => $concerns['duration_concern'] * $windowSize,
+            'size_concern_sum' => $concerns['size_concern'] * $windowSize,
+            'total_concern_sum' => $concerns['total_concern'] * $windowSize
+        ];
     }
 
     /**
@@ -211,19 +279,22 @@ class AnomalyDetector implements AnomalyDetectorInterface {
         if (empty($anomalyPoints)) return [];
         usort($anomalyPoints, fn($a, $b) => $a['time'] <=> $b['time']);
         $durations = [];
-        $currentSegmentStart = $anomalyPoints[0]['time'];
-        $prevTime = $currentSegmentStart;
+        $step = $this->config['corrdor_params']['step'] ?? 60;
+        $segmentCount = 1;
+        $prevTime = $anomalyPoints[0]['time'];
         for ($i = 1; $i < count($anomalyPoints); $i++) {
             $currTime = $anomalyPoints[$i]['time'];
-            if ($currTime > $prevTime + ($this->config['corrdor_params']['step'] ?? 60)) {
+            if ($currTime > $prevTime + $step) {
                 // Конец сегмента
-                $durations[] = ($prevTime - $currentSegmentStart);
-                $currentSegmentStart = $currTime;
+                $durations[] = $segmentCount * $step;
+                $segmentCount = 1;
+            } else {
+                $segmentCount++;
             }
             $prevTime = $currTime;
         }
         // Последний сегмент
-        $durations[] = ($prevTime - $currentSegmentStart);
+        $durations[] = $segmentCount * $step;
         return $durations;
     }
 }

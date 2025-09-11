@@ -121,13 +121,34 @@ class ResponseFormatter {
             }
 
             if (in_array('anomaly_concern_sum', $metricsToShow)) {
+                $aboveS = $result['anomaly_concern_duration_sum_above'] ?? 0;
+                $belowS = $result['anomaly_concern_duration_sum_below'] ?? 0;
+                $aboveS += $result['anomaly_concern_size_sum_above'] ?? 0;
+                $belowS += $result['anomaly_concern_size_sum_below'] ?? 0;
                 $formatted['data']['result'][] = [
                     'metric' => $this->formatMetricLabels(array_merge($labels, ['__name__' => 'anomaly_concern_above_sum', 'original_query' => $query])),
-                    'values' => [[time(), (string)(($result['anomaly_concern_above_sum'] ?? 0) * 100)]]
+                    'values' => [[time(), (string)round($aboveS * 100, 2)]]
                 ];
                 $formatted['data']['result'][] = [
                     'metric' => $this->formatMetricLabels(array_merge($labels, ['__name__' => 'anomaly_concern_below_sum', 'original_query' => $query])),
-                    'values' => [[time(), (string)(($result['anomaly_concern_below_sum'] ?? 0) * 100)]]
+                    'values' => [[time(), (string)round($belowS * 100, 2)]]
+                ];
+                // Separate sum concerns
+                $formatted['data']['result'][] = [
+                    'metric' => $this->formatMetricLabels(array_merge($labels, ['__name__' => 'anomaly_concern_duration_sum_above', 'original_query' => $query])),
+                    'values' => [[time(), (string)round(($result['anomaly_concern_duration_sum_above'] ?? 0) * 100, 2)]]
+                ];
+                $formatted['data']['result'][] = [
+                    'metric' => $this->formatMetricLabels(array_merge($labels, ['__name__' => 'anomaly_concern_size_sum_above', 'original_query' => $query])),
+                    'values' => [[time(), (string)round(($result['anomaly_concern_size_sum_above'] ?? 0) * 100, 2)]]
+                ];
+                $formatted['data']['result'][] = [
+                    'metric' => $this->formatMetricLabels(array_merge($labels, ['__name__' => 'anomaly_concern_duration_sum_below', 'original_query' => $query])),
+                    'values' => [[time(), (string)round(($result['anomaly_concern_duration_sum_below'] ?? 0) * 100, 2)]]
+                ];
+                $formatted['data']['result'][] = [
+                    'metric' => $this->formatMetricLabels(array_merge($labels, ['__name__' => 'anomaly_concern_size_sum_below', 'original_query' => $query])),
+                    'values' => [[time(), (string)round(($result['anomaly_concern_size_sum_below'] ?? 0) * 100, 2)]]
                 ];
             }
 

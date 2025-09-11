@@ -150,23 +150,39 @@ class CorridorBuilder
             $currStats = $this->anomalyDetector->calculateAnomalyStats(
                 $orig, $cU, $cL,
                 $this->config['corrdor_params']['default_percentiles'],
-                true
+                true, // raw
+                false // not historical
             );
-
+   
             // concern-метрики
             $wsize = $this->config['corrdor_params']['window_size'];
-            $aboveC = $this->anomalyDetector->calculateIntegralMetric(
+            $aboveConcerns = $this->anomalyDetector->calculateIntegralMetric(
                 $currStats['above'], $cached['meta']['anomaly_stats']['above'] ?? []
             );
-            $belowC = $this->anomalyDetector->calculateIntegralMetric(
+            $belowConcerns = $this->anomalyDetector->calculateIntegralMetric(
                 $currStats['below'], $cached['meta']['anomaly_stats']['below'] ?? []
             );
-            $aboveS = $this->anomalyDetector->calculateIntegralMetricSum(
+            $aboveC = $aboveConcerns['total_concern'];
+            $belowC = $belowConcerns['total_concern'];
+   
+            $aboveSums = $this->anomalyDetector->calculateIntegralMetricSum(
                 $currStats['above'], $cached['meta']['anomaly_stats']['above'] ?? [], $wsize
             );
-            $belowS = $this->anomalyDetector->calculateIntegralMetricSum(
+            $belowSums = $this->anomalyDetector->calculateIntegralMetricSum(
                 $currStats['below'], $cached['meta']['anomaly_stats']['below'] ?? [], $wsize
             );
+            $aboveS = $aboveSums['total_concern_sum'];
+            $belowS = $belowSums['total_concern_sum'];
+   
+            // Add separate concerns
+            $item['anomaly_concern_duration_above'] = $aboveConcerns['duration_concern'];
+            $item['anomaly_concern_size_above'] = $aboveConcerns['size_concern'];
+            $item['anomaly_concern_duration_below'] = $belowConcerns['duration_concern'];
+            $item['anomaly_concern_size_below'] = $belowConcerns['size_concern'];
+            $item['anomaly_concern_duration_sum_above'] = $aboveSums['duration_concern_sum'];
+            $item['anomaly_concern_size_sum_above'] = $aboveSums['size_concern_sum'];
+            $item['anomaly_concern_duration_sum_below'] = $belowSums['duration_concern_sum'];
+            $item['anomaly_concern_size_sum_below'] = $belowSums['size_concern_sum'];
 
             // собираем
             $item = [

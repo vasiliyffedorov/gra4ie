@@ -109,7 +109,9 @@ class StatsCacheManager {
         // Статистики аномалий
         $stats = $this->anomalyDetector->calculateAnomalyStats(
             $historyData, $upperSeries, $lowerSeries,
-            $currentConfig['corrdor_params']['default_percentiles']
+            $currentConfig['corrdor_params']['default_percentiles'],
+            false, // raw
+            true // isHistorical
         );
         $meta['anomaly_stats'] = $stats;
 

@@ -9,7 +9,7 @@ blacklist_datasource_ids = ceh9u3ymlpdz4b, ceptwsd7y2tj4d
 
 corrdor_params.type = "adaptive"
 corrdor_params.step = 1800
-corrdor_params.historical_period_days = 60
+corrdor_params.historical_period_days = 35
 corrdor_params.historical_offset_days = 0
 corrdor_params.window_size = 10
 corrdor_params.margin_percent = 10
