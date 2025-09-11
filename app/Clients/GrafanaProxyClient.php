@@ -90,7 +90,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
         }
 
         if (!$target || empty($target['targets'])) {
-            $this->logger->warn("Панель {$info['panel_id']} не содержит targets");
+            $this->logger->warning("Панель {$info['panel_id']} не содержит targets");
             return [];
         }
 
@@ -123,12 +123,17 @@ class GrafanaProxyClient implements GrafanaClientInterface
             }
             $queries[] = $q;
         }
+        if (empty($queries)) {
+            $this->logger->error("Нет targets для метрики $metricName – возвращаем пустой результат");
+            return [];
+        }
 
         $body = json_encode([
             'from'    => (string)$fromMs,
             'to'      => (string)$toMs,
             'queries' => $queries,
         ]);
+        $this->logger->info("DS query body for $metricName (type: {$this->lastDataSourceType}): " . substr($body, 0, 500));
 
         $resp = $this->httpRequest('POST', "{$this->grafanaUrl}/api/ds/query", $body);
         if (!$resp) {
@@ -150,7 +155,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
             $this->logger->info("Кэш метрик Grafana загружен: " . implode(', ', array_keys($this->metricsCache)));
         } else {
             $this->metricsCache = [];
-            $this->logger->warn("Кэш метрик Grafana не найден, метрики будут пустыми до обновления");
+            $this->logger->warning("Кэш метрик Grafana не найден, метрики будут пустыми до обновления");
         }
     }
 
@@ -190,7 +195,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
             $title = $dash['title'] ?: $uid;
             $dashJson = $this->httpRequest('GET', "{$this->grafanaUrl}/api/dashboards/uid/$uid");
             if (!$dashJson) {
-                $this->logger->warn("Не удалось загрузить дашборд $uid");
+                $this->logger->warning("Не удалось загрузить дашборд $uid");
                 continue;
             }
             $dashData = json_decode($dashJson, true);
@@ -320,13 +325,27 @@ class GrafanaProxyClient implements GrafanaClientInterface
         }
 
         if (!$targetPanel || empty($targetPanel['targets'])) {
-            $this->logger->warn("Панель {$info['panel_id']} не найдена или без targets");
+            $this->logger->warning("Панель {$info['panel_id']} не найдена или без targets");
             return false;
         }
 
-        $originalExpr = $targetPanel['targets'][0]['expr'] ?? '';
+        // Для danger dashboard только Prometheus с expr
+        $dsType = $targetPanel['targets'][0]['datasource']['type'] ?? '';
+        if ($dsType !== 'prometheus') {
+            $this->logger->info("Danger dashboard только для Prometheus, пропуск $metricName (type: $dsType)");
+            return false;
+        }
+
+        // Ищем первый non-empty expr в targets
+        $originalExpr = '';
+        foreach ($targetPanel['targets'] as $t) {
+            if (!empty($t['expr'] ?? '')) {
+                $originalExpr = $t['expr'];
+                break;
+            }
+        }
         if (empty($originalExpr)) {
-            $this->logger->warn("Expr не найден в панели {$info['panel_id']} для создания danger dashboard, пропуск");
+            $this->logger->warning("Expr не найден в панели {$info['panel_id']} для создания danger dashboard, пропуск");
             return false;
         }
 
@@ -561,6 +580,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
         ];
 
         $body = json_encode($newDashboard);
+        $this->logger->info("Создание danger dashboard для $metricName, body length: " . strlen($body));
         $resp = $this->httpRequest('POST', "{$this->grafanaUrl}/api/dashboards/db", $body);
         if (!$resp) {
             $this->logger->error("Ошибка создания дашборда для $metricName");
@@ -573,6 +593,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
             $this->logger->error("UID не получен при создании дашборда: " . json_encode($responseData));
             return false;
         }
+        $this->logger->info("Danger dashboard создан для $metricName, UID: $uid");
 
         $dashboardTitle = $responseData['title'] ?? "Danger Alert for $metricName";
         $dashboardUrl = $this->grafanaUrl . "/d/" . $uid . "/" . rawurlencode($dashboardTitle);
@@ -610,11 +631,18 @@ class GrafanaProxyClient implements GrafanaClientInterface
         }
 
         if (!$targetPanel || empty($targetPanel['targets'])) {
-            $this->logger->warn("Панель {$info['panel_id']} не найдена или без targets");
+            $this->logger->warning("Панель {$info['panel_id']} не найдена или без targets");
             return false;
         }
 
-        $expr = $targetPanel['targets'][0]['expr'] ?? '';
+        // Ищем первый non-empty expr в targets
+        $expr = '';
+        foreach ($targetPanel['targets'] as $t) {
+            if (!empty($t['expr'] ?? '')) {
+                $expr = $t['expr'];
+                break;
+            }
+        }
         if (empty($expr)) {
             $this->logger->error("Expr не найден в панели {$info['panel_id']}");
             return false;
