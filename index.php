@@ -122,6 +122,14 @@ $container = new Container($config);
 $logger = $container->get(LoggerInterface::class);
 $proxy = $container->get(GrafanaClientInterface::class);
 
+// Автоматическое обновление кэша дашбордов, если пустой
+if (empty($proxy->getMetricNames())) {
+    $logger->info("Кэш дашбордов пустой, автоматически обновляем...");
+    shell_exec('php ' . __DIR__ . '/bin/update_dashboards_cache.php');
+    $proxy->reloadMetricsCache();
+    $logger->info("Кэш дашбордов обновлён автоматически.");
+}
+
 // 3) роутинг
 $method = $_SERVER['REQUEST_METHOD'];
 $path   = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);

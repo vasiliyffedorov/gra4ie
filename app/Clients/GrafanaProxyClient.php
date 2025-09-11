@@ -149,6 +149,11 @@ class GrafanaProxyClient implements GrafanaClientInterface
         }
     }
 
+    public function reloadMetricsCache(): void
+    {
+        $this->loadMetricsCache();
+    }
+
     /**
      * Обновляем $metricsCache из Grafana и сохраняем в кэш.
      */
