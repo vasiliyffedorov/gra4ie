@@ -9,16 +9,18 @@ use App\Cache\SQLiteCacheDatabase;
 use App\Cache\SQLiteCacheIO;
 use App\Cache\SQLiteCacheMaintenance;
 use App\Cache\SQLiteCacheConfig;
+use App\Cache\GrafanaMetricsCache;
 
 class SQLiteCacheManager implements CacheManagerInterface
 {
-    private $dbManager;
-    private $ioManager;
-    private $maintenanceManager;
-    private $configManager;
+    private SQLiteCacheDatabase $dbManager;
+    private SQLiteCacheIO $ioManager;
+    private SQLiteCacheMaintenance $maintenanceManager;
+    private SQLiteCacheConfig $configManager;
+    private GrafanaMetricsCache $grafanaMetricsCache;
     private LoggerInterface $logger;
-    private $maxTtl;
-    private $config;
+    private int $maxTtl;
+    private array $config;
 
     public function __construct(string $dbPath, LoggerInterface $logger, int $maxTtl = 86400, array $config = [])
     {
@@ -32,6 +34,7 @@ class SQLiteCacheManager implements CacheManagerInterface
             $this->ioManager = new SQLiteCacheIO($this->dbManager, $logger, $maxTtl, $config);
             $this->maintenanceManager = new SQLiteCacheMaintenance($this->dbManager, $logger);
             $this->configManager = new SQLiteCacheConfig($logger);
+            $this->grafanaMetricsCache = new GrafanaMetricsCache($this->dbManager, $logger);
         } catch (Exception $e) {
             $this->logger->error("Ошибка инициализации SQLiteCacheManager: " . $e->getMessage());
             throw new Exception("Не удалось инициализировать кэш SQLite");
@@ -96,46 +99,15 @@ class SQLiteCacheManager implements CacheManagerInterface
     {
         return $this->configManager->createConfigHash($config);
     }
+
     public function saveGrafanaMetrics(array $metrics): bool
     {
-        $db = $this->dbManager->getDb();
-        try {
-            $json = json_encode($metrics, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-            $stmt = $db->prepare("
-                INSERT INTO grafana_metrics (metrics_key, metrics_json, last_updated)
-                VALUES ('global_metrics', :json, CURRENT_TIMESTAMP)
-                ON CONFLICT(metrics_key) DO UPDATE SET
-                    metrics_json = :json,
-                    last_updated = CURRENT_TIMESTAMP
-            ");
-            $stmt->execute([':json' => $json]);
-            $this->logger->info("Кэш метрик Grafana сохранен в БД");
-            return true;
-        } catch (\PDOException $e) {
-            $this->logger->error("Ошибка сохранения кэша метрик Grafana: " . $e->getMessage());
-            return false;
-        }
+        return $this->grafanaMetricsCache->saveMetrics($metrics);
     }
 
     public function loadGrafanaMetrics(): ?array
     {
-        $db = $this->dbManager->getDb();
-        try {
-            $stmt = $db->prepare("SELECT metrics_json FROM grafana_metrics WHERE metrics_key = 'global_metrics'");
-            $stmt->execute();
-            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
-            if ($row) {
-                $metrics = json_decode($row['metrics_json'], true);
-                if (json_last_error() === JSON_ERROR_NONE) {
-                    $this->logger->info("Кэш метрик Grafana загружен из БД");
-                    return $metrics;
-                }
-            }
-            return null;
-        } catch (\PDOException $e) {
-            $this->logger->error("Ошибка загрузки кэша метрик Grafana: " . $e->getMessage());
-            return null;
-        }
+        return $this->grafanaMetricsCache->loadMetrics();
     }
 }
 ?>

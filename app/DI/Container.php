@@ -7,11 +7,16 @@ use App\Interfaces\LoggerInterface;
 use App\Interfaces\CacheManagerInterface;
 use App\Interfaces\GrafanaClientInterface;
 use App\Interfaces\DFTProcessorInterface;
+use App\Interfaces\DataProcessorInterface;
+use App\Interfaces\AnomalyDetectorInterface;
 use App\Utilities\Logger;
 use App\Clients\GrafanaProxyClient;
 use App\Cache\CacheManagerFactory;
 use App\Processors\FourierTransformer;
 use App\Processors\DFTProcessor;
+use App\Processors\DataProcessor;
+use App\Processors\AnomalyDetector;
+use App\Processors\StatsCalculator;
 use Psr\SimpleCache\SimpleCacheInterface;
 use Exception;
 
@@ -63,10 +68,53 @@ class Container
 
         // DFTProcessor
         $this->services[DFTProcessorInterface::class] = function () {
+            $config = $this->get('config');
             $logger = $this->get(LoggerInterface::class);
-            return new \App\Processors\DFTProcessor($this->config, $logger);
+            $trendCalculator = $this->get(TrendCalculatorInterface::class);
+            return new \App\Processors\DFTProcessor($config, $logger, $trendCalculator);
         };
-
+    
+        // LinearTrendCalculator
+        $this->services[TrendCalculatorInterface::class] = function () {
+            $logger = $this->get(LoggerInterface::class);
+            return new \App\Processors\LinearTrendCalculator($logger);
+        };
+    
+        // DataProcessor
+        $this->services[DataProcessorInterface::class] = function () {
+            $config = $this->get('config');
+            $logger = $this->get(LoggerInterface::class);
+            return new DataProcessor($config, $logger);
+        };
+    
+        // AnomalyDetector
+        $this->services[AnomalyDetectorInterface::class] = function () {
+            $config = $this->get('config');
+            $logger = $this->get(LoggerInterface::class);
+            return new AnomalyDetector($config, $logger);
+        };
+    
+        // StatsCalculator
+        $this->services[StatsCalculator::class] = function () {
+            $config = $this->get('config');
+            $logger = $this->get(LoggerInterface::class);
+            $dataProcessor = $this->get(DataProcessorInterface::class);
+            $dftProcessor = $this->get(DFTProcessorInterface::class);
+            $anomalyDetector = $this->get(AnomalyDetectorInterface::class);
+            return new StatsCalculator($config, $logger, $dataProcessor, $dftProcessor, $anomalyDetector);
+        };
+    
+        // StatsCacheManager
+        $this->services[\App\Processors\StatsCacheManager::class] = function () {
+            $config = $this->get('config');
+            $logger = $this->get(LoggerInterface::class);
+            $cacheManager = $this->get(CacheManagerInterface::class);
+            $responseFormatter = new \App\Formatters\ResponseFormatter($config);
+            $dataProcessor = $this->get(DataProcessorInterface::class);
+            $dftProcessor = $this->get(DFTProcessorInterface::class);
+            $anomalyDetector = $this->get(AnomalyDetectorInterface::class);
+            return new \App\Processors\StatsCacheManager($config, $logger, $cacheManager, $responseFormatter, $dataProcessor, $dftProcessor, $anomalyDetector);
+        };
         // PSR-16 Cache Adapter
         $this->services[SimpleCacheInterface::class] = function () {
             $logger = $this->get(LoggerInterface::class);

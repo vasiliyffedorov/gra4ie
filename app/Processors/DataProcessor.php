@@ -3,13 +3,15 @@ declare(strict_types=1);
 
 namespace App\Processors;
 
-use App\Utilities\Logger;
+use App\Interfaces\DataProcessorInterface;
+use App\Interfaces\LoggerInterface;
 
-class DataProcessor {
-    private $config;
-    private $logger;
 
-    public function __construct(array $config, Logger $logger) {
+class DataProcessor implements DataProcessorInterface {
+    private array $config;
+    private LoggerInterface $logger;
+
+    public function __construct(array $config, LoggerInterface $logger) {
         $this->config = $config;
         $this->logger = $logger;
     }

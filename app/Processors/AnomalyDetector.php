@@ -3,13 +3,15 @@ declare(strict_types=1);
 
 namespace App\Processors;
 
-use App\Utilities\Logger;
+use App\Interfaces\AnomalyDetectorInterface;
+use App\Interfaces\LoggerInterface;
 
-class AnomalyDetector {
-    private $config;
-    private $logger;
 
-    public function __construct(array $config, Logger $logger) {
+class AnomalyDetector implements AnomalyDetectorInterface {
+    private array $config;
+    private LoggerInterface $logger;
+
+    public function __construct(array $config, LoggerInterface $logger) {
         $this->config = $config;
         $this->logger = $logger;
     }
@@ -61,37 +63,52 @@ class AnomalyDetector {
             ];
         }
 
+        // Сортируем все массивы по времени
         usort($dataPoints, fn($a, $b) => $a['time'] <=> $b['time']);
+        usort($upperBound, fn($a, $b) => $a['time'] <=> $b['time']);
+        usort($lowerBound, fn($a, $b) => $b['time'] <=> $b['time']);
 
-        $start = $dataPoints[0]['time'] ?? 0;
+        $totalDuration = ($dataPoints[array_key_last($dataPoints)]['time'] - $dataPoints[0]['time']);
+        if ($totalDuration <= 0) $totalDuration = 1; // Избежать деления на 0
 
-        $above = [];
-        $below = [];
-        $combined = [];
+        $step = $this->config['corrdor_params']['step'] ?? 60; // Шаг из config
 
-        $percentiles = $percentileConfig ?? ['duration' => 75, 'size' => 75];
-        $cntP = count($percentiles);
+        // Инициализация для above и below
+        $aboveAnomalies = ['points' => [], 'segments' => [], 'total_time' => 0, 'count' => 0];
+        $belowAnomalies = ['points' => [], 'segments' => [], 'total_time' => 0, 'count' => 0];
 
-        if (count($dataPoints) <= $cntP) {
-            $durations = array_map(fn($p) => $p['time'] - $start, $dataPoints);
-            $sizes = array_map(fn($p) => $p['value'], $dataPoints);
-        } else {
-            $durations = $this->calculatePercentileValues(
-                array_map(fn($p) => $p['time'] - $start, $dataPoints),
-                $percentiles
-            );
-            $sizes = $this->calculatePercentileValues(
-                array_map(fn($p) => $p['value'], $dataPoints),
-                $percentiles
-            );
+        // Align по индексу, предполагая одинаковый step и aligned times
+        $n = count($dataPoints);
+        for ($i = 0; $i < $n; $i++) {
+            $data = $dataPoints[$i];
+            $upper = $upperBound[$i] ?? ['value' => 0];
+            $lower = $lowerBound[$i] ?? ['value' => 0];
+
+            $deviation = null;
+            if ($data['value'] > $upper['value']) {
+                $deviation = $data['value'] - $upper['value'];
+                $aboveAnomalies['points'][] = ['time' => $data['time'], 'size' => $deviation];
+                $aboveAnomalies['total_time'] += $step;
+                $aboveAnomalies['count']++;
+            } elseif ($data['value'] < $lower['value']) {
+                $deviation = $lower['value'] - $data['value'];
+                $belowAnomalies['points'][] = ['time' => $data['time'], 'size' => $deviation];
+                $belowAnomalies['total_time'] += $step;
+                $belowAnomalies['count']++;
+            }
         }
 
-        $above['time_outside_percent'] = round($durations[$cntP - 1] ?? 0, 2);
-        $below['time_outside_percent'] = round($durations[$cntP - 1] ?? 0, 2);
-        $above['anomaly_count'] = count($durations);
-        $below['anomaly_count'] = count($sizes);
-        $above['durations'] = $durations;
-        $below['sizes'] = $sizes;
+        // Группировка сегментов аномалий (consecutive)
+        $above['durations'] = $this->groupAnomalySegments($aboveAnomalies['points']);
+        $below['durations'] = $this->groupAnomalySegments($belowAnomalies['points']);
+        $above['sizes'] = array_column($aboveAnomalies['points'], 'size');
+        $below['sizes'] = array_column($belowAnomalies['points'], 'size');
+
+        // % времени вне коридора
+        $above['time_outside_percent'] = round(($aboveAnomalies['total_time'] / $totalDuration) * 100, 2);
+        $below['time_outside_percent'] = round(($belowAnomalies['total_time'] / $totalDuration) * 100, 2);
+        $above['anomaly_count'] = $aboveAnomalies['count'];
+        $below['anomaly_count'] = $belowAnomalies['count'];
         $above['direction'] = 'above';
         $below['direction'] = 'below';
 
@@ -99,6 +116,9 @@ class AnomalyDetector {
         $combined['anomaly_count'] = $above['anomaly_count'] + $below['anomaly_count'];
 
         if ($raw) {
+            $percentiles = $percentileConfig ?? [75];
+            $above['durations'] = $this->calculatePercentileValues($above['durations'], $percentiles);
+            $below['sizes'] = $this->calculatePercentileValues($below['sizes'], $percentiles);
             return [
                 'above' => $above,
                 'below' => $below,
@@ -164,9 +184,9 @@ class AnomalyDetector {
      */
     public function calculateIntegralMetric(array $currentStats, array $historicalStats): float
     {
-        $current = array_sum($currentStats['durations'] ?? $currentStats['sizes'] ?? []);
-        $historical = array_sum($historicalStats['durations'] ?? $historicalStats['sizes'] ?? []);
-        return abs($current - $historical);
+        $currentPercent = $currentStats['time_outside_percent'] ?? 0;
+        $historicalPercent = $historicalStats['time_outside_percent'] ?? 0;
+        return abs($currentPercent - $historicalPercent);
     }
 
     /**
@@ -180,7 +200,31 @@ class AnomalyDetector {
     public function calculateIntegralMetricSum(array $currentStats, array $historicalStats, int $windowSize): float
     {
         $metric = $this->calculateIntegralMetric($currentStats, $historicalStats);
-        return $metric * $windowSize;
+        return $metric * $windowSize; // Теперь % * size, но можно скорректировать если нужно
+    }
+
+    /**
+     * Группирует consecutive аномалии в сегменты, возвращает durations в секундах
+     */
+    private function groupAnomalySegments(array $anomalyPoints): array
+    {
+        if (empty($anomalyPoints)) return [];
+        usort($anomalyPoints, fn($a, $b) => $a['time'] <=> $b['time']);
+        $durations = [];
+        $currentSegmentStart = $anomalyPoints[0]['time'];
+        $prevTime = $currentSegmentStart;
+        for ($i = 1; $i < count($anomalyPoints); $i++) {
+            $currTime = $anomalyPoints[$i]['time'];
+            if ($currTime > $prevTime + ($this->config['corrdor_params']['step'] ?? 60)) {
+                // Конец сегмента
+                $durations[] = ($prevTime - $currentSegmentStart);
+                $currentSegmentStart = $currTime;
+            }
+            $prevTime = $currTime;
+        }
+        // Последний сегмент
+        $durations[] = ($prevTime - $currentSegmentStart);
+        return $durations;
     }
 }
 ?>

@@ -111,7 +111,7 @@ foreach ($metricNames as $metricName) {
         $metricNameInResult = $result['metric']['__name__'] ?? '';
         if ($metricNameInResult === 'anomaly_concern_above') {
             $values = $result['values'][0] ?? [];
-            $concern = (float)($values[1] ?? 0) / 100;
+            $concern = (float)($values[1] ?? 0);
             if ($concern > $maxConcernAbove) {
                 $maxConcernAbove = $concern;
             }

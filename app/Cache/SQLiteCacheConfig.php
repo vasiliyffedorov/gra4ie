@@ -95,7 +95,7 @@ class SQLiteCacheConfig
         }
     }
 
-    private function updateQueryParams(PDO $db, int $queryId, ?string $customParams, ?string $configHash): void
+    private function updateQueryParams(\PDO $db, int $queryId, ?string $customParams, ?string $configHash): void
     {
         try {
             $inTransaction = $db->inTransaction();
@@ -121,7 +121,7 @@ class SQLiteCacheConfig
         }
     }
 
-    private function updateLastAccessedQueryIfNeeded(PDO $db, int $queryId, string $lastAccessed): void
+    private function updateLastAccessedQueryIfNeeded(\PDO $db, int $queryId, string $lastAccessed): void
     {
         $currentHour = date('Y-m-d H:00:00');
         $lastAccessedHour = date('Y-m-d H:00:00', strtotime($lastAccessed));

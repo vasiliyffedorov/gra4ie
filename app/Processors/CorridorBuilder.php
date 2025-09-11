@@ -7,9 +7,6 @@ use App\Utilities\Logger;
 use App\Clients\GrafanaProxyClient;
 use App\Formatters\ResponseFormatter;
 use App\Cache\CacheManagerFactory;
-use App\Processors\DataProcessor;
-use App\Processors\DFTProcessor;
-use App\Processors\AnomalyDetector;
 use App\Utilities\PerformanceMonitor;
 use App\Processors\StatsCacheManager;
 use App\Processors\CorridorWidthEnsurer;
@@ -17,7 +14,9 @@ use App\DI\Container;
 use App\Interfaces\GrafanaClientInterface;
 use App\Interfaces\LoggerInterface;
 use App\Interfaces\CacheManagerInterface;
+use App\Interfaces\DataProcessorInterface;
 use App\Interfaces\DFTProcessorInterface;
+use App\Interfaces\AnomalyDetectorInterface;
 
 class CorridorBuilder
 {
@@ -26,9 +25,9 @@ class CorridorBuilder
     private array $config;
     private ResponseFormatter $responseFormatter;
     private CacheManagerInterface $cacheManager;
-    private DataProcessor $dataProcessor;
-    private DFTProcessor $dftProcessor;
-    private AnomalyDetector $anomalyDetector;
+    private DataProcessorInterface $dataProcessor;
+    private DFTProcessorInterface $dftProcessor;
+    private AnomalyDetectorInterface $anomalyDetector;
     private StatsCacheManager $statsCacheManager;
     private Container $container;
 
@@ -39,24 +38,11 @@ class CorridorBuilder
         $this->logger = $container->get(LoggerInterface::class);
         $this->client = $container->get(GrafanaClientInterface::class);
         $this->cacheManager = $container->get(CacheManagerInterface::class);
-        $this->dataProcessor = new \App\Processors\DataProcessor($this->config, $this->logger);
+        $this->dataProcessor = $container->get(DataProcessorInterface::class);
         $this->dftProcessor = $container->get(DFTProcessorInterface::class);
+        $this->anomalyDetector = $container->get(AnomalyDetectorInterface::class);
         $this->responseFormatter = new \App\Formatters\ResponseFormatter($this->config);
-        $this->anomalyDetector = new \App\Processors\AnomalyDetector($this->config, $this->logger);
-        $statsCalculator = new \App\Processors\StatsCalculator(
-            $this->config,
-            $this->logger,
-            $this->dataProcessor,
-            $this->dftProcessor,
-            $this->anomalyDetector
-        );
-        $this->statsCacheManager = new \App\Processors\StatsCacheManager(
-            $this->config,
-            $this->logger,
-            $this->cacheManager,
-            $this->responseFormatter,
-            $statsCalculator
-        );
+        $this->statsCacheManager = $container->get(StatsCacheManager::class);
 
         \App\Utilities\PerformanceMonitor::init(
             $this->config['performance']['enabled'] ?? false,
@@ -68,8 +54,8 @@ class CorridorBuilder
     {
         $this->config = $config;
         $this->dataProcessor->updateConfig($config);
+        $this->anomalyDetector->updateConfig($config);
         $this->responseFormatter->updateConfig($config);
-        $this->anomalyDetector = new \App\Processors\AnomalyDetector($config, $this->logger);
     }
 
     /**
@@ -112,7 +98,7 @@ class CorridorBuilder
         // 3) по каждой группе
         foreach ($grouped as $labelsJson => $orig) {
             if ($count++ >= ($this->config['timeout']['max_metrics'] ?? 10)) {
-                $this->logger->warn("Превышен лимит метрик");
+                $this->logger->warning("Превышен лимит метрик");
                 break;
             }
 
@@ -127,13 +113,6 @@ class CorridorBuilder
                 );
             }
 
-            // если мало истории — placeholder-режим
-            if (count($longGrouped[$labelsJson] ?? []) < ($this->config['corrdor_params']['min_data_points'] ?? 10)) {
-                $results[] = $this->statsCacheManager->processInsufficientData(
-                    $query, $labelsJson, $orig, $start, $end, $step
-                );
-                continue;
-            }
 
             // ресторим DFT
             $upper = $this->dftProcessor->restoreFullDFT(

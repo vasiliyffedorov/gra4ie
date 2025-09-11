@@ -4,20 +4,20 @@ declare(strict_types=1);
 namespace App\Processors;
 
 use App\Interfaces\LoggerInterface;
-use App\Processors\DataProcessor;
+use App\Interfaces\DataProcessorInterface;
 use App\Interfaces\DFTProcessorInterface;
-use App\Processors\AnomalyDetector;
+use App\Interfaces\AnomalyDetectorInterface;
 use App\Processors\CorridorWidthEnsurer;
 
 class StatsCalculator
 {
     private array $config;
     private LoggerInterface $logger;
-    private DataProcessor $dataProcessor;
+    private DataProcessorInterface $dataProcessor;
     private DFTProcessorInterface $dftProcessor;
-    private AnomalyDetector $anomalyDetector;
+    private AnomalyDetectorInterface $anomalyDetector;
 
-    public function __construct(array $config, LoggerInterface $logger, DataProcessor $dataProcessor, \App\Processors\DFTProcessor $dftProcessor, \App\Processors\AnomalyDetector $anomalyDetector)
+    public function __construct(array $config, LoggerInterface $logger, DataProcessorInterface $dataProcessor, DFTProcessorInterface $dftProcessor, AnomalyDetectorInterface $anomalyDetector)
     {
         $this->config = $config;
         $this->logger = $logger;
@@ -62,6 +62,41 @@ class StatsCalculator
     ): array {
         return $this->anomalyDetector->calculateAnomalyStats($dataPoints, $upperBound, $lowerBound, $percentileConfig, $raw);
     }
+
+    public function buildPlaceholder(string $query, string $labelsJson, int $start, int $end, int $step): array
+    {
+        $labels = json_decode($labelsJson, true);
+        $labels['unused_metric'] = 'true';
+
+        $meta = [
+            'query'            => $query,
+            'labels'           => $labels,
+            'created_at'       => time(),
+            'is_placeholder'   => true,
+            'dataStart'        => $start,
+            'step'             => $step,
+            'totalDuration'    => $end - $start,
+            'config_hash'      => $this->createConfigHash($this->config),
+            'dft_rebuild_count'=> 0,
+            'anomaly_stats'    => [
+                'above' => ['time_outside_percent'=>0,'anomaly_count'=>0,'durations'=>[],'sizes'=>[],'direction'=>'above'],
+                'below' => ['time_outside_percent'=>0,'anomaly_count'=>0,'durations'=>[],'sizes'=>[],'direction'=>'below'],
+                'combined'=>['time_outside_percent'=>0,'anomaly_count'=>0],
+            ],
+        ];
+
+        return [
+            'meta'      => $meta,
+            'dft_upper' => ['coefficients'=>[], 'trend'=>['slope'=>0,'intercept'=>0]],
+            'dft_lower' => ['coefficients'=>[], 'trend'=>['slope'=>0,'intercept'=>0]],
+        ];
+    }
+
+    public function createConfigHash(array $config): string
+    {
+        return md5(serialize($config));
+    }
+
 
     public function recalculateStats(string $query, string $labelsJson, array $liveData, array $historyData): array
     {
@@ -135,37 +170,4 @@ class StatsCalculator
         return $payload;
     }
 
-    private function buildPlaceholder(string $query, string $labelsJson, int $start, int $end, int $step): array
-    {
-        $labels = json_decode($labelsJson, true);
-        $labels['unused_metric'] = 'true';
-
-        $meta = [
-            'query'            => $query,
-            'labels'           => $labels,
-            'created_at'       => time(),
-            'is_placeholder'   => true,
-            'dataStart'        => $start,
-            'step'             => $step,
-            'totalDuration'    => $end - $start,
-            'config_hash'      => $this->createConfigHash($this->config),
-            'dft_rebuild_count'=> 0,
-            'anomaly_stats'    => [
-                'above' => ['time_outside_percent'=>0,'anomaly_count'=>0,'durations'=>[],'sizes'=>[],'direction'=>'above'],
-                'below' => ['time_outside_percent'=>0,'anomaly_count'=>0,'durations'=>[],'sizes'=>[],'direction'=>'below'],
-                'combined'=>['time_outside_percent'=>0,'anomaly_count'=>0],
-            ],
-        ];
-
-        return [
-            'meta'      => $meta,
-            'dft_upper' => ['coefficients'=>[], 'trend'=>['slope'=>0,'intercept'=>0]],
-            'dft_lower' => ['coefficients'=>[], 'trend'=>['slope'=>0,'intercept'=>0]],
-        ];
-    }
-
-    private function createConfigHash(array $config): string
-    {
-        return md5(serialize($config));
-    }
 }

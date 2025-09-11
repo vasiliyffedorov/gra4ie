@@ -6,30 +6,35 @@ namespace App\Processors;
 use App\Interfaces\LoggerInterface;
 use App\Interfaces\CacheManagerInterface;
 use App\Formatters\ResponseFormatter;
-use App\Processors\DataProcessor;
+use App\Interfaces\DataProcessorInterface;
 use App\Interfaces\DFTProcessorInterface;
-use App\Processors\AnomalyDetector;
-use App\Processors\StatsCalculator;
+use App\Interfaces\AnomalyDetectorInterface;
 
 class StatsCacheManager {
     private array $config;
     private LoggerInterface $logger;
     private CacheManagerInterface $cacheManager;
     private ResponseFormatter $responseFormatter;
-    private StatsCalculator $statsCalculator;
+    private DataProcessorInterface $dataProcessor;
+    private DFTProcessorInterface $dftProcessor;
+    private AnomalyDetectorInterface $anomalyDetector;
 
     public function __construct(
         array $config,
         LoggerInterface $logger,
         CacheManagerInterface $cacheManager,
         ResponseFormatter $responseFormatter,
-        StatsCalculator $statsCalculator
+        DataProcessorInterface $dataProcessor,
+        DFTProcessorInterface $dftProcessor,
+        AnomalyDetectorInterface $anomalyDetector
     ) {
         $this->config = $config;
         $this->logger = $logger;
         $this->cacheManager = $cacheManager;
         $this->responseFormatter = $responseFormatter;
-        $this->statsCalculator = $statsCalculator;
+        $this->dataProcessor = $dataProcessor;
+        $this->dftProcessor = $dftProcessor;
+        $this->anomalyDetector = $anomalyDetector;
     }
 
     /**
@@ -49,11 +54,12 @@ class StatsCacheManager {
             return $cached;
         }
 
-        // Обновляем конфиг в калькуляторе
-        $this->statsCalculator->updateConfig($currentConfig);
-
+        // Обновляем конфиг в процессорах
+        $this->dataProcessor->updateConfig($currentConfig);
+        $this->anomalyDetector->updateConfig($currentConfig);
+    
         // Рассчитываем DFT и статистики
-        $range = $this->statsCalculator->getActualDataRange($historyData);
+        $range = $this->dataProcessor->getActualDataRange($historyData);
         $longStart = $range['start'];
         $longEnd = $range['end'];
         $longStep = $currentConfig['corrdor_params']['step'];
@@ -65,8 +71,8 @@ class StatsCacheManager {
         }
 
         // Генерируем DFT
-        $bounds = $this->statsCalculator->calculateBounds($historyData, $longStart, $longEnd, $longStep);
-        $dftResult = $this->statsCalculator->generateDFT($bounds, $longStart, $longEnd, $longStep);
+        $bounds = $this->dataProcessor->calculateBounds($historyData, $longStart, $longEnd, $longStep);
+        $dftResult = $this->dftProcessor->generateDFT($bounds, $longStart, $longEnd, $longStep);
 
         // Фильтруем «нулевые» гармоники
         $dftResult['upper']['coefficients'] = array_filter(
@@ -89,19 +95,19 @@ class StatsCacheManager {
             'created_at'        => time(),
         ];
 
-        $upperSeries = $this->statsCalculator->restoreFullDFT(
+        $upperSeries = $this->dftProcessor->restoreFullDFT(
             $dftResult['upper']['coefficients'],
             $longStart, $longEnd, $longStep,
             $meta, $dftResult['upper']['trend']
         );
-        $lowerSeries = $this->statsCalculator->restoreFullDFT(
+        $lowerSeries = $this->dftProcessor->restoreFullDFT(
             $dftResult['lower']['coefficients'],
             $longStart, $longEnd, $longStep,
             $meta, $dftResult['lower']['trend']
         );
 
         // Статистики аномалий
-        $stats = $this->statsCalculator->calculateAnomalyStats(
+        $stats = $this->anomalyDetector->calculateAnomalyStats(
             $historyData, $upperSeries, $lowerSeries,
             $currentConfig['corrdor_params']['default_percentiles']
         );
