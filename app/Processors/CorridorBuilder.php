@@ -1,26 +1,33 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__.'/../Utilities/Logger.php';
-require_once __DIR__.'/../Clients/GrafanaProxyClient.php';
-require_once __DIR__.'/../Formatters/ResponseFormatter.php';
-require_once __DIR__.'/../Cache/CacheManagerFactory.php';
-require_once __DIR__.'/DataProcessor.php';
-require_once __DIR__.'/DFTProcessor.php';
-require_once __DIR__.'/AnomalyDetector.php';
-require_once __DIR__.'/../Utilities//PerformanceMonitor.php';
-require_once __DIR__.'/StatsCacheManager.php';
-require_once __DIR__.'/CorridorWidthEnsurer.php';
+namespace App\Processors;
+
+use App\Utilities\Logger;
+use App\Clients\GrafanaProxyClient;
+use App\Formatters\ResponseFormatter;
+use App\Cache\CacheManagerFactory;
+use App\Processors\DataProcessor;
+use App\Processors\DFTProcessor;
+use App\Processors\AnomalyDetector;
+use App\Utilities\PerformanceMonitor;
+use App\Processors\StatsCacheManager;
+use App\Processors\CorridorWidthEnsurer;
+use App\DI\Container;
+use App\Interfaces\GrafanaClientInterface;
+use App\Interfaces\LoggerInterface;
+use App\Interfaces\CacheManagerInterface;
+use App\Interfaces\DFTProcessorInterface;
 
 class CorridorBuilder
 {
     private GrafanaClientInterface $client;
-    private LoggerInterface $logger;
+    private Logger $logger;
     private array $config;
     private ResponseFormatter $responseFormatter;
     private CacheManagerInterface $cacheManager;
     private DataProcessor $dataProcessor;
-    private DFTProcessorInterface $dftProcessor;
+    private DFTProcessor $dftProcessor;
     private AnomalyDetector $anomalyDetector;
     private StatsCacheManager $statsCacheManager;
     private Container $container;
@@ -32,18 +39,18 @@ class CorridorBuilder
         $this->logger = $container->get(LoggerInterface::class);
         $this->client = $container->get(GrafanaClientInterface::class);
         $this->cacheManager = $container->get(CacheManagerInterface::class);
-        $this->dataProcessor = new DataProcessor($this->config, $this->logger);
+        $this->dataProcessor = new \App\Processors\DataProcessor($this->config, $this->logger);
         $this->dftProcessor = $container->get(DFTProcessorInterface::class);
-        $this->responseFormatter = new ResponseFormatter($this->config);
-        $this->anomalyDetector = new AnomalyDetector($this->config, $this->logger);
-        $statsCalculator = new StatsCalculator(
+        $this->responseFormatter = new \App\Formatters\ResponseFormatter($this->config);
+        $this->anomalyDetector = new \App\Processors\AnomalyDetector($this->config, $this->logger);
+        $statsCalculator = new \App\Processors\StatsCalculator(
             $this->config,
             $this->logger,
             $this->dataProcessor,
             $this->dftProcessor,
             $this->anomalyDetector
         );
-        $this->statsCacheManager = new StatsCacheManager(
+        $this->statsCacheManager = new \App\Processors\StatsCacheManager(
             $this->config,
             $this->logger,
             $this->cacheManager,
@@ -51,7 +58,7 @@ class CorridorBuilder
             $statsCalculator
         );
 
-        PerformanceMonitor::init(
+        \App\Utilities\PerformanceMonitor::init(
             $this->config['performance']['enabled'] ?? false,
             $this->config['performance']['threshold_ms'] ?? 5.0
         );
@@ -62,7 +69,7 @@ class CorridorBuilder
         $this->config = $config;
         $this->dataProcessor->updateConfig($config);
         $this->responseFormatter->updateConfig($config);
-        $this->anomalyDetector = new AnomalyDetector($config, $this->logger);
+        $this->anomalyDetector = new \App\Processors\AnomalyDetector($config, $this->logger);
     }
 
     /**

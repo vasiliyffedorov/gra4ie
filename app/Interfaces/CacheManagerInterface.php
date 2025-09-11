@@ -1,9 +1,11 @@
 <?php
 declare(strict_types=1);
 
+namespace App\Interfaces;
+
 interface CacheManagerInterface
 {
-    public function __construct(string $dbPath, LoggerInterface $logger, int $maxTtl, array $config);
+    public function __construct(string $dbPath, LoggerInterface $logger, int $maxTtl = 86400, array $config = []);
 
     public function loadFromCache(string $query, string $labelsJson): ?array;
 

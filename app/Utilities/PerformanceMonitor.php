@@ -1,4 +1,8 @@
 <?php
+declare(strict_types=1);
+
+namespace App\Utilities;
+
 class PerformanceMonitor {
     private static $enabled = true;
     private static $thresholdMs = 5.0;

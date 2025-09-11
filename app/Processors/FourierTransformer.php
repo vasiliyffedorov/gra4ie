@@ -1,7 +1,9 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/../Interfaces/LoggerInterface.php';
+namespace App\Processors;
+
+use App\Interfaces\LoggerInterface;
 
 interface FourierTransformerInterface
 {

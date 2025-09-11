@@ -1,19 +1,22 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/../Interfaces/DFTProcessorInterface.php';
-require_once __DIR__ . '/../Utilities/Logger.php';
-require_once __DIR__ . '/FourierTransformer.php';
+namespace App\Processors;
+
+use App\Interfaces\DFTProcessorInterface;
+use App\Interfaces\LoggerInterface;
+use App\Utilities\Logger;
+use App\Processors\FourierTransformer;
 
 class DFTProcessor implements DFTProcessorInterface {
     private array $config;
     private LoggerInterface $logger;
-    private FourierTransformerInterface $fourierTransformer;
+    private FourierTransformer $fourierTransformer;
 
-    public function __construct(array $config, LoggerInterface $logger) {
+    public function __construct(array $config, Logger $logger) {
         $this->config = $config;
         $this->logger = $logger;
-        $this->fourierTransformer = new FourierTransformer($logger);
+        $this->fourierTransformer = new \App\Processors\FourierTransformer($logger);
     }
 
     public function generateDFT(array $bounds, int $start, int $end, int $step): array {

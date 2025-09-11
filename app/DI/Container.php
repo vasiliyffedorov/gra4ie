@@ -1,15 +1,18 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/../Interfaces/LoggerInterface.php';
-require_once __DIR__ . '/../Interfaces/GrafanaClientInterface.php';
-require_once __DIR__ . '/../Interfaces/CacheManagerInterface.php';
-require_once __DIR__ . '/../Interfaces/DFTProcessorInterface.php';
-require_once __DIR__ . '/../Processors/FourierTransformer.php';
-require_once __DIR__ . '/../Utilities/Logger.php';
-require_once __DIR__ . '/../Clients/GrafanaProxyClient.php';
-require_once __DIR__ . '/../Cache/CacheManagerFactory.php';
-require_once __DIR__ . '/../Processors/DFTProcessor.php';
+namespace App\DI;
+
+use App\Interfaces\LoggerInterface;
+use App\Interfaces\CacheManagerInterface;
+use App\Interfaces\GrafanaClientInterface;
+use App\Interfaces\DFTProcessorInterface;
+use App\Utilities\Logger;
+use App\Clients\GrafanaProxyClient;
+use App\Cache\CacheManagerFactory;
+use App\Processors\FourierTransformer;
+use App\Processors\DFTProcessor;
+use Exception;
 
 class Container
 {
@@ -27,8 +30,8 @@ class Container
     {
         // Logger
         $this->services[LoggerInterface::class] = function () {
-            $logLevel = Logger::{'LEVEL_' . strtoupper($this->config['log_level'] ?? 'INFO')};
-            return new Logger($this->config['log_file'], $logLevel);
+            $logLevel = \App\Utilities\Logger::{'LEVEL_' . strtoupper($this->config['log_level'] ?? 'INFO')};
+            return new \App\Utilities\Logger($this->config['log_file'], $logLevel);
         };
 
         // CacheManager
@@ -52,7 +55,7 @@ class Container
         };
 
         // FourierTransformer
-        $this->services[FourierTransformerInterface::class] = function () {
+        $this->services[FourierTransformer::class] = function () {
             $logger = $this->get(LoggerInterface::class);
             return new FourierTransformer($logger);
         };
@@ -60,7 +63,7 @@ class Container
         // DFTProcessor
         $this->services[DFTProcessorInterface::class] = function () {
             $logger = $this->get(LoggerInterface::class);
-            return new DFTProcessor($this->config, $logger);
+            return new \App\Processors\DFTProcessor($this->config, $logger);
         };
 
         // Config (raw array)

@@ -1,6 +1,10 @@
 <?php
-require_once __DIR__ . '/../Utilities/Logger.php';
-require_once __DIR__ . '/SQLiteCacheDatabase.php';
+declare(strict_types=1);
+
+namespace App\Cache;
+
+use App\Utilities\Logger;
+use App\Cache\SQLiteCacheDatabase;
 
 class SQLiteCacheMaintenance
 {

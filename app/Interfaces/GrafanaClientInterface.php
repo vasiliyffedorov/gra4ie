@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+namespace App\Interfaces;
+
 interface GrafanaClientInterface
 {
     public function __construct(string $grafanaUrl, string $apiToken, LoggerInterface $logger, array $blacklistDatasourceIds = [], ?CacheManagerInterface $cacheManager = null);

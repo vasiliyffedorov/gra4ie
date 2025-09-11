@@ -1,11 +1,13 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/../Interfaces/LoggerInterface.php';
-require_once __DIR__ . '/DataProcessor.php';
-require_once __DIR__ . '/../Interfaces/DFTProcessorInterface.php';
-require_once __DIR__ . '/AnomalyDetector.php';
-require_once __DIR__ . '/CorridorWidthEnsurer.php';
+namespace App\Processors;
+
+use App\Interfaces\LoggerInterface;
+use App\Processors\DataProcessor;
+use App\Interfaces\DFTProcessorInterface;
+use App\Processors\AnomalyDetector;
+use App\Processors\CorridorWidthEnsurer;
 
 class StatsCalculator
 {
@@ -15,7 +17,7 @@ class StatsCalculator
     private DFTProcessorInterface $dftProcessor;
     private AnomalyDetector $anomalyDetector;
 
-    public function __construct(array $config, LoggerInterface $logger, DataProcessor $dataProcessor, DFTProcessorInterface $dftProcessor, AnomalyDetector $anomalyDetector)
+    public function __construct(array $config, LoggerInterface $logger, DataProcessor $dataProcessor, \App\Processors\DFTProcessor $dftProcessor, \App\Processors\AnomalyDetector $anomalyDetector)
     {
         $this->config = $config;
         $this->logger = $logger;

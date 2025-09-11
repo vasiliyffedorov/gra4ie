@@ -1,7 +1,11 @@
 <?php
-require_once __DIR__ . '/../Utilities/Logger.php';
-require_once __DIR__ . '/SQLiteCacheDatabase.php';
-require_once __DIR__ . '/SQLiteCacheConfig.php';
+declare(strict_types=1);
+
+namespace App\Cache;
+
+use App\Utilities\Logger;
+use App\Cache\SQLiteCacheDatabase;
+use App\Cache\SQLiteCacheConfig;
 
 class SQLiteCacheIO
 {
@@ -93,7 +97,7 @@ class SQLiteCacheIO
                 WHERE q.query = :query AND dc.metric_hash = :metric_hash"
             );
             $stmt->execute([':query' => $query, ':metric_hash' => $metricHash]);
-            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
             if (!$row) {
                 return null;
             }
@@ -140,7 +144,7 @@ class SQLiteCacheIO
                 WHERE q.query = :query"
             );
             $stmt->execute([':query' => $query]);
-            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC);
             $results = [];
             foreach ($rows as $row) {
                 $labelsJson = $row['metric_json'];
@@ -205,7 +209,7 @@ class SQLiteCacheIO
                 WHERE q.query = :query AND dc.metric_hash = :metric_hash"
             );
             $stmt->execute([':query' => $query, ':metric_hash' => $metricHash]);
-            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
             if (!$row || !isset($row['config_hash'])) {
                 return true;
             }
@@ -236,7 +240,7 @@ class SQLiteCacheIO
         }
     }
 
-    private function updateLastAccessedIfNeeded(PDO $db, int $queryId, string $metricHash, string $lastAccessed): void
+    private function updateLastAccessedIfNeeded(\PDO $db, int $queryId, string $metricHash, string $lastAccessed): void
     {
         $currentHour = date('Y-m-d H:00:00');
         $lastAccessedHour = date('Y-m-d H:00:00', strtotime($lastAccessed));

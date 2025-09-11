@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+namespace App\Interfaces;
+
 interface LoggerInterface
 {
     // PSR-3 levels mapping (optional, for internal use)

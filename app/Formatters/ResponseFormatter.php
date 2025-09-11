@@ -1,6 +1,10 @@
 <?php
-require_once __DIR__ . '/../Utilities/Logger.php';
-require_once __DIR__ . '/../Processors/AnomalyDetector.php';
+declare(strict_types=1);
+
+namespace App\Formatters;
+
+use App\Utilities\Logger;
+use App\Processors\AnomalyDetector;
 
 class ResponseFormatter {
     private $showMetrics;
@@ -10,16 +14,16 @@ class ResponseFormatter {
     public function __construct(array $config) {
         $this->config = $config;
         $this->updateConfig($config);
-        $this->anomalyDetector = new AnomalyDetector($config, new Logger($config['log_file'], $this->getLogLevel($config['log_level'] ?? 'INFO')));
+        $this->anomalyDetector = new \App\Processors\AnomalyDetector($config, new \App\Utilities\Logger($config['log_file'], \App\Utilities\Logger::LEVEL_INFO));
     }
 
     private function getLogLevel(string $logLevel): int {
         $logLevelMap = [
-            'INFO' => Logger::LEVEL_INFO,
-            'WARN' => Logger::LEVEL_WARN,
-            'ERROR' => Logger::LEVEL_ERROR
+            'INFO' => \App\Utilities\Logger::LEVEL_INFO,
+            'WARN' => \App\Utilities\Logger::LEVEL_WARN,
+            'ERROR' => \App\Utilities\Logger::LEVEL_ERROR
         ];
-        return $logLevelMap[strtoupper($logLevel)] ?? Logger::LEVEL_INFO;
+        return $logLevelMap[strtoupper($logLevel)] ?? \App\Utilities\Logger::LEVEL_INFO;
     }
 
     public function updateConfig(array $config): void {

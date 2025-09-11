@@ -1,5 +1,9 @@
 <?php
-require_once __DIR__ . '/../Utilities/Logger.php';
+declare(strict_types=1);
+
+namespace App\Processors;
+
+use App\Utilities\Logger;
 
 class DataProcessor {
     private $config;

@@ -1,6 +1,10 @@
 <?php
 declare(strict_types=1);
 
+namespace App\Utilities;
+
+use App\Interfaces\LoggerInterface;
+
 class Logger implements LoggerInterface {
     private string $filePath;
     private int $logLevel;
@@ -39,7 +43,7 @@ class Logger implements LoggerInterface {
         }
     }
 
-    private function logInternal(string $message, ?string $file = null, ?int $line = null, int $level): void {
+    private function logInternal(int $level, string $message, ?string $file = null, ?int $line = null): void {
         if ($level < $this->logLevel) {
             return;
         }
@@ -76,7 +80,7 @@ class Logger implements LoggerInterface {
         $intLevel = is_string($level) ? (self::LEVEL_MAP[strtolower($level)] ?? self::LEVEL_ERROR) : (int) $level;
         $contextStr = !empty($context) ? ' [context: ' . json_encode($context) . ']' : '';
         $fullMessage = (string) $message . $contextStr;
-        $this->logInternal($fullMessage, null, null, $intLevel);
+        $this->logInternal($intLevel, $fullMessage, null, null);
     }
 
     public function emergency($message, array $context = []): void {
@@ -113,19 +117,19 @@ class Logger implements LoggerInterface {
 
     // Legacy methods for backward compatibility (additional methods)
     public function legacyDebug(string $message, string $file, int $line): void {
-        $this->logInternal($message, $file, $line, self::LEVEL_DEBUG);
+        $this->logInternal(self::LEVEL_DEBUG, $message, $file, $line);
     }
 
     public function legacyInfo(string $message, string $file, int $line): void {
-        $this->logInternal($message, $file, $line, self::LEVEL_INFO);
+        $this->logInternal(self::LEVEL_INFO, $message, $file, $line);
     }
 
     public function legacyWarn(string $message, string $file, int $line): void {
-        $this->logInternal($message, $file, $line, self::LEVEL_WARN);
+        $this->logInternal(self::LEVEL_WARN, $message, $file, $line);
     }
 
     public function legacyError(string $message, string $file, int $line): void {
-        $this->logInternal($message, $file, $line, self::LEVEL_ERROR);
+        $this->logInternal(self::LEVEL_ERROR, $message, $file, $line);
     }
 }
 ?>

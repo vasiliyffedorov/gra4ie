@@ -16,8 +16,7 @@ foreach ($directories as $dir) {
     }
 }
 
-require_once './app/DI/Container.php';
-require_once './app/Processors/CorridorBuilder.php';
+require './vendor/autoload.php';
 
 // Читаем конфиг аналогично index.php
 $flatIni = parse_ini_file('./config/config.cfg', true, INI_SCANNER_RAW);
@@ -64,9 +63,9 @@ foreach ($requiredKeys as $key) {
     }
 }
 
-$container = new Container($config);
-$proxy = $container->get(GrafanaClientInterface::class);
-$builder = new CorridorBuilder($container);
+$container = new \App\DI\Container($config);
+$proxy = $container->get(\App\Interfaces\GrafanaClientInterface::class);
+$builder = new \App\Processors\CorridorBuilder($container);
 
 echo "Обновление кэша метрик Grafana...\n";
 $proxy->updateMetricsCache();

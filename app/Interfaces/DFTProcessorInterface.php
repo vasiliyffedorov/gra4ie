@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+namespace App\Interfaces;
+
 interface DFTProcessorInterface
 {
     public function generateDFT(array $bounds, int $start, int $end, int $step): array;

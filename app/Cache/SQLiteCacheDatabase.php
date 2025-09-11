@@ -1,5 +1,9 @@
 <?php
-require_once __DIR__ . '/../Utilities/Logger.php';
+declare(strict_types=1);
+
+namespace App\Cache;
+
+use App\Utilities\Logger;
 
 class SQLiteCacheDatabase
 {
@@ -10,8 +14,8 @@ class SQLiteCacheDatabase
     {
         $this->logger = $logger;
         $isNewDb = !file_exists($dbPath);
-        $this->db = new PDO("sqlite:" . $dbPath);
-        $this->db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $this->db = new \PDO("sqlite:" . $dbPath);
+        $this->db->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
 
         if ($isNewDb) {
             $this->initializeDatabase();
@@ -21,7 +25,7 @@ class SQLiteCacheDatabase
         }
     }
 
-    public function getDb(): PDO
+    public function getDb(): \PDO
     {
         return $this->db;
     }
@@ -77,8 +81,8 @@ class SQLiteCacheDatabase
 
     private function checkAndMigrateDatabase(): void
     {
-        $result = $this->db->query("PRAGMA table_info(queries)");
-        $columns = $result->fetchAll(PDO::FETCH_ASSOC);
+        $result = $this->db->query(\sprintf("PRAGMA table_info(queries)"));
+        $columns = $result->fetchAll(\PDO::FETCH_ASSOC);
         $hasCustomParams = false;
         $hasConfigHash = false;
         foreach ($columns as $column) {
@@ -100,8 +104,8 @@ class SQLiteCacheDatabase
             $this->logger->info("Столбец config_hash добавлен в таблицу queries.");
         }
 
-        $result = $this->db->query("PRAGMA table_info(dft_cache)");
-        $columns = $result->fetchAll(PDO::FETCH_ASSOC);
+        $result = $this->db->query(\sprintf("PRAGMA table_info(dft_cache)"));
+        $columns = $result->fetchAll(\PDO::FETCH_ASSOC);
         $hasUpperTrend = false;
         $hasLowerTrend = false;
         foreach ($columns as $column) {
@@ -124,7 +128,7 @@ class SQLiteCacheDatabase
         }
 
         // Migrate for grafana_metrics table
-        $tableExists = $this->db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='grafana_metrics'")->fetchColumn();
+        $tableExists = $this->db->query(\sprintf("SELECT name FROM sqlite_master WHERE type='table' AND name='grafana_metrics'"))->fetchColumn();
         if (!$tableExists) {
             $this->logger->warn("Создание таблицы grafana_metrics.");
             $this->db->exec("

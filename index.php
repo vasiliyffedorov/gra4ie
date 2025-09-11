@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-require_once __DIR__ . '/app/DI/Container.php';
+require __DIR__ . '/vendor/autoload.php';
 
 header('Content-Type: application/json');
 ini_set('display_errors', 1);
@@ -118,9 +118,9 @@ foreach ($requiredKeys as $key) {
     }
 }
 
-$container = new Container($config);
-$logger = $container->get(LoggerInterface::class);
-$proxy = $container->get(GrafanaClientInterface::class);
+$container = new \App\DI\Container($config);
+$logger = $container->get(\App\Interfaces\LoggerInterface::class);
+$proxy = $container->get(\App\Interfaces\GrafanaClientInterface::class);
 
 // Автоматическое обновление кэша дашбордов, если пустой
 if (empty($proxy->getMetricNames())) {
@@ -200,8 +200,7 @@ if ($method==='POST' && $path==='/api/v1/query_range') {
     $step  = (int)($params['step']  ?? 60);
 
     // и строим коридор
-    require_once __DIR__ . '/app/Processors/CorridorBuilder.php';
-    $corridorBuilder = new CorridorBuilder($container);
+    $corridorBuilder = new \App\Processors\CorridorBuilder($container);
     $corridorBuilder->updateConfig($finalConfig);
     $result = $corridorBuilder->build(
         $params['query'],

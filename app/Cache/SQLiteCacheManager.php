@@ -1,12 +1,14 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/../Interfaces/CacheManagerInterface.php';
-require_once __DIR__ . '/../Utilities/Logger.php';
-require_once __DIR__ . '/SQLiteCacheDatabase.php';
-require_once __DIR__ . '/SQLiteCacheIO.php';
-require_once __DIR__ . '/SQLiteCacheMaintenance.php';
-require_once __DIR__ . '/SQLiteCacheConfig.php';
+namespace App\Cache;
+
+use App\Interfaces\CacheManagerInterface;
+use App\Interfaces\LoggerInterface;
+use App\Cache\SQLiteCacheDatabase;
+use App\Cache\SQLiteCacheIO;
+use App\Cache\SQLiteCacheMaintenance;
+use App\Cache\SQLiteCacheConfig;
 
 class SQLiteCacheManager implements CacheManagerInterface
 {
@@ -109,7 +111,7 @@ class SQLiteCacheManager implements CacheManagerInterface
             $stmt->execute([':json' => $json]);
             $this->logger->info("Кэш метрик Grafana сохранен в БД");
             return true;
-        } catch (PDOException $e) {
+        } catch (\PDOException $e) {
             $this->logger->error("Ошибка сохранения кэша метрик Grafana: " . $e->getMessage());
             return false;
         }
@@ -121,7 +123,7 @@ class SQLiteCacheManager implements CacheManagerInterface
         try {
             $stmt = $db->prepare("SELECT metrics_json FROM grafana_metrics WHERE metrics_key = 'global_metrics'");
             $stmt->execute();
-            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
             if ($row) {
                 $metrics = json_decode($row['metrics_json'], true);
                 if (json_last_error() === JSON_ERROR_NONE) {
@@ -130,7 +132,7 @@ class SQLiteCacheManager implements CacheManagerInterface
                 }
             }
             return null;
-        } catch (PDOException $e) {
+        } catch (\PDOException $e) {
             $this->logger->error("Ошибка загрузки кэша метрик Grafana: " . $e->getMessage());
             return null;
         }

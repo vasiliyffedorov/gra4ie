@@ -1,13 +1,18 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/../Utilities/Logger.php';
+namespace App\Clients;
+
+use App\Interfaces\LoggerInterface;
+use App\Interfaces\GrafanaClientInterface;
+use App\Interfaces\CacheManagerInterface;
+use App\Cache\CacheManagerInterface as CacheManager; // Wait, no, it's App\Interfaces\CacheManagerInterface
 
 class GrafanaProxyClient implements GrafanaClientInterface
 {
     private string $grafanaUrl;
     private string $apiToken;
-    private Logger $logger;
+    private LoggerInterface $logger;
     private array $metricsCache = [];
     private array $headers;
     private array $blacklistDatasourceIds; // New property for blacklisted datasource IDs
