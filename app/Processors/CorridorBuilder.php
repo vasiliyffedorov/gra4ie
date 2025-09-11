@@ -78,6 +78,10 @@ class CorridorBuilder
         // 1) live-данные
         PerformanceMonitor::start('prometheus_fetch');
         $raw = $this->client->queryRange($query, $start, $end, $step);
+        if (empty($raw)) {
+            $this->logger->warning("No data from Grafana for query $query");
+            return $this->responseFormatter->formatError("No data from Grafana");
+        }
         PerformanceMonitor::end('prometheus_fetch');
 
         $grouped = $this->dataProcessor->groupData($raw);

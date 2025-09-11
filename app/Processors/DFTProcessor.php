@@ -119,7 +119,11 @@ class DFTProcessor implements DFTProcessorInterface {
         // Восстанавливаем гармоники для всего запрошенного периода
         for ($t = $start; $t <= $end; $t += $step) {
             // Нормализуем время относительно периода данных, чтобы гармоники продолжались
-            $normalizedTime = ($t - $dataStart) / $periodSeconds;
+            if ($periodSeconds <= 0) {
+                $normalizedTime = 0.0;
+            } else {
+                $normalizedTime = ($t - $dataStart) / $periodSeconds;
+            }
             $value = $this->fourierTransformer->calculateDFTValue($coefficients, $normalizedTime, $periodSeconds);
 
             // Добавляем тренд, если он предоставлен

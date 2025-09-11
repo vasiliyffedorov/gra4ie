@@ -50,7 +50,7 @@ class StatsCacheManager {
         // Если метрика помечена как unused — ничего не делаем
         $cached = $this->cacheManager->loadFromCache($query, $labelsJson);
         if (isset($cached['meta']['labels']['unused_metric'])) {
-            $this->logger->info("Пропуск пересчета unused_metric", __FILE__, __LINE__);
+            $this->logger->legacyInfo("Пропуск пересчета unused_metric", __FILE__, __LINE__);
             return $cached;
         }
 
@@ -66,7 +66,7 @@ class StatsCacheManager {
 
         $minPts = $currentConfig['corrdor_params']['min_data_points'];
         if (count($historyData) < $minPts) {
-            $this->logger->warn("Недостаточно долгосрочных данных, placeholder", __FILE__, __LINE__);
+            $this->logger->legacyWarn("Недостаточно долгосрочных данных, placeholder", __FILE__, __LINE__);
             return $this->buildPlaceholder($query, $labelsJson, $longStart, $longEnd, $longStep);
         }
 
