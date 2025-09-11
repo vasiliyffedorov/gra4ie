@@ -16,7 +16,10 @@ foreach ($directories as $dir) {
     }
 }
 
-require_once './app/DI/Container.php';
+require './vendor/autoload.php';
+
+use App\DI\Container;
+use App\Interfaces\GrafanaClientInterface;
 
 // Читаем конфиг аналогично index.php
 $flatIni = parse_ini_file('./config/config.cfg', true, INI_SCANNER_RAW);

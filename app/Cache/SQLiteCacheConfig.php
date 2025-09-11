@@ -25,7 +25,7 @@ class SQLiteCacheConfig
             }
             $stmt = $db->prepare("SELECT id, last_accessed, custom_params, config_hash FROM queries WHERE query = :query");
             $stmt->execute([':query' => $query]);
-            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
             if ($row) {
                 $this->updateLastAccessedQueryIfNeeded($db, $row['id'], $row['last_accessed']);
                 if ($customParams !== null || $configHash !== null) {
@@ -42,7 +42,7 @@ class SQLiteCacheConfig
                 ':custom_params' => $customParams,
                 ':config_hash' => $configHash
             ]);
-            $queryId = $db->lastInsertId();
+            $queryId = (int)$db->lastInsertId();
             if (!$inTransaction) {
                 $db->commit();
             }
@@ -63,7 +63,7 @@ class SQLiteCacheConfig
         try {
             $stmt = $db->prepare("SELECT custom_params FROM queries WHERE query = :query");
             $stmt->execute([':query' => $query]);
-            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
             return $row['custom_params'] ?? null;
         } catch (PDOException $e) {
             $this->logger->legacyError("Не удалось получить кастомные параметры для запроса: $query, ошибка: " . $e->getMessage(), __FILE__, __LINE__);

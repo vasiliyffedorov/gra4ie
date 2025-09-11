@@ -33,6 +33,36 @@ class StatsCalculator
         $this->anomalyDetector->updateConfig($config);
     }
 
+    public function getActualDataRange(array $data, ?int $defaultStart = null, ?int $defaultEnd = null): array
+    {
+        return $this->dataProcessor->getActualDataRange($data, $defaultStart, $defaultEnd);
+    }
+
+    public function calculateBounds(array $data, int $start, int $end, int $step): array
+    {
+        return $this->dataProcessor->calculateBounds($data, $start, $end, $step);
+    }
+
+    public function generateDFT(array $bounds, int $start, int $end, int $step): array
+    {
+        return $this->dftProcessor->generateDFT($bounds, $start, $end, $step);
+    }
+
+    public function restoreFullDFT(array $coefficients, int $start, int $end, int $step, array $meta, ?array $trend = null): array
+    {
+        return $this->dftProcessor->restoreFullDFT($coefficients, $start, $end, $step, $meta, $trend);
+    }
+
+    public function calculateAnomalyStats(
+        array $dataPoints,
+        array $upperBound,
+        array $lowerBound,
+        ?array $percentileConfig = null,
+        bool $raw = false
+    ): array {
+        return $this->anomalyDetector->calculateAnomalyStats($dataPoints, $upperBound, $lowerBound, $percentileConfig, $raw);
+    }
+
     public function recalculateStats(string $query, string $labelsJson, array $liveData, array $historyData): array
     {
         $range = $this->dataProcessor->getActualDataRange($historyData);

@@ -12,6 +12,7 @@ use App\Clients\GrafanaProxyClient;
 use App\Cache\CacheManagerFactory;
 use App\Processors\FourierTransformer;
 use App\Processors\DFTProcessor;
+use Psr\SimpleCache\SimpleCacheInterface;
 use Exception;
 
 class Container
@@ -64,6 +65,12 @@ class Container
         $this->services[DFTProcessorInterface::class] = function () {
             $logger = $this->get(LoggerInterface::class);
             return new \App\Processors\DFTProcessor($this->config, $logger);
+        };
+
+        // PSR-16 Cache Adapter
+        $this->services[SimpleCacheInterface::class] = function () {
+            $logger = $this->get(LoggerInterface::class);
+            return CacheManagerFactory::createPsrCache($this->config, $logger);
         };
 
         // Config (raw array)

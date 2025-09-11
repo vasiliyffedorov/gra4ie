@@ -77,22 +77,49 @@ php -S 0.0.0.0:9093
 
 Пример запроса в Grafana: Выберите метрику, и Gra4ie автоматически обработает данные, добавив corridor и anomaly detection.
 
-Для тестирования: Проверьте логи в `./logs/` (если настроено) и кэш в указанном пути.
+Для тестирования: Проверьте логи в `./logs/` (если настроено) и кэш в указанном пути. Для PSR-16 кэша используйте `php bin/test_psr_cache.php`.
 
 ## Архитектура
 
 - **Входная точка**: `index.php` — обрабатывает HTTP-запросы от Grafana.
 - **DI Container**: `app/DI/Container.php` — управление зависимостями.
 - **Клиенты**: `app/Clients/GrafanaProxyClient.php` — взаимодействие с Grafana API.
-- **Процессоры**: 
+- **Процессоры**:
   - `StatsCalculator.php` — расчет статистик.
   - `FourierTransformer.php` и `DFTProcessor.php` — DFT для трендов.
   - `CorridorBuilder.php` — построение коридоров.
   - `AnomalyDetector.php` — детекция аномалий.
-- **Кэш**: `app/Cache/SQLiteCacheManager.php` — управление кэшем на SQLite.
+- **Кэш**: `app/Cache/SQLiteCacheManager.php` — управление кэшем на SQLite. Поддержка PSR-16 через адаптер `PsrDftCacheAdapter.php`.
 - **Утилиты**: `Logger.php` — логирование, `PerformanceMonitor.php` — мониторинг.
 
 Приложение использует интерфейсы для абстракции (например, `LoggerInterface.php`, `CacheManagerInterface.php`).
+
+## Интеграция PSR-16 для кэша
+
+Система кэша теперь поддерживает стандарт PSR-16 (Simple Cache) через адаптер `App\Cache\PsrDftCacheAdapter`. Это позволяет использовать стандартные интерфейсы PSR-16 для кэширования данных DFT.
+
+### Основные особенности
+- **Совместимость**: Оборачивает существующий `SQLiteCacheManager` без изменения схемы БД.
+- **Формат ключей**: Ключи в формате `query|labelsJson` (например, `rate(http_requests_total{job="api-server"}[5m])|{"instance":"10.0.0.1:8080","job":"api-server"}`).
+- **Сопоставление методов**:
+  - `get/set`: Сопоставляется с `loadFromCache/saveToCache`.
+  - `has`: Сопоставляется с `checkCacheExists`.
+  - `delete`: Частично поддерживается (предупреждение, так как прямое удаление не в оригинальном интерфейсе).
+  - `clear`: Использует `cleanupOldEntries(0)`.
+- **Инъекция**: Используйте `\Psr\SimpleCache\SimpleCacheInterface` в DI Container.
+
+### Пример использования
+```php
+$container = new \App\DI\Container($config);
+$psrCache = $container->get(\Psr\SimpleCache\SimpleCacheInterface::class);
+
+$key = $query . '|' . json_encode($labels);
+$psrCache->set($key, $dftData);
+$dftData = $psrCache->get($key);
+```
+
+### Тестирование
+Запустите `php bin/test_psr_cache.php` для проверки функциональности PSR-16 с примерами DFT данных.
 
 ## Вклад в проект
 
