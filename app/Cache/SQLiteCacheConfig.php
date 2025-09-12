@@ -46,13 +46,13 @@ class SQLiteCacheConfig
             if (!$inTransaction) {
                 $db->commit();
             }
-            $this->logger->legacyInfo("Создана новая запись в queries для запроса: $query, query_id: $queryId", __FILE__, __LINE__);
+            $this->logger->info("Создана новая запись в queries для запроса: $query, query_id: $queryId");
             return $queryId;
         } catch (PDOException $e) {
             if ($db->inTransaction()) {
                 $db->rollBack();
             }
-            $this->logger->legacyError("Ошибка при получении или создании query_id для запроса: $query, ошибка: " . $e->getMessage(), __FILE__, __LINE__);
+            $this->logger->error("Ошибка при получении или создании query_id для запроса: $query, ошибка: " . $e->getMessage());
             throw new Exception("Не удалось получить или создать query_id");
         }
     }
@@ -66,7 +66,7 @@ class SQLiteCacheConfig
             $row = $stmt->fetch(\PDO::FETCH_ASSOC);
             return $row['custom_params'] ?? null;
         } catch (PDOException $e) {
-            $this->logger->legacyError("Не удалось получить кастомные параметры для запроса: $query, ошибка: " . $e->getMessage(), __FILE__, __LINE__);
+            $this->logger->error("Не удалось получить кастомные параметры для запроса: $query, ошибка: " . $e->getMessage());
             return null;
         }
     }
@@ -90,7 +90,7 @@ class SQLiteCacheConfig
             if ($db->inTransaction()) {
                 $db->rollBack();
             }
-            $this->logger->legacyError("Не удалось сбросить кастомные параметры для запроса: $query, ошибка: " . $e->getMessage(), __FILE__, __LINE__);
+            $this->logger->error("Не удалось сбросить кастомные параметры для запроса: $query, ошибка: " . $e->getMessage());
             return false;
         }
     }
@@ -116,7 +116,7 @@ class SQLiteCacheConfig
             if ($db->inTransaction()) {
                 $db->rollBack();
             }
-            $this->logger->legacyError("Не удалось обновить параметры для query_id: $queryId, ошибка: " . $e->getMessage(), __FILE__, __LINE__);
+            $this->logger->error("Не удалось обновить параметры для query_id: $queryId, ошибка: " . $e->getMessage());
             throw new Exception("Не удалось обновить параметры запроса");
         }
     }

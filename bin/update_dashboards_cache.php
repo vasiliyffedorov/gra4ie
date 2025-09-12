@@ -68,8 +68,9 @@ foreach ($requiredKeys as $key) {
 
 $container = new Container($config);
 $proxy = $container->get(GrafanaClientInterface::class);
+$logger = $container->get(\App\Interfaces\LoggerInterface::class);
 
-echo "Обновление кэша метрик Grafana...\n";
+$logger->info("Обновление кэша метрик Grafana");
 $proxy->updateMetricsCache();
-echo "Кэш метрик Grafana обновлён.\n";
+$logger->info("Кэш метрик Grafana обновлён");
 ?>

@@ -70,9 +70,7 @@ class Logger implements LoggerInterface {
             $message
         );
 
-        if (!file_put_contents($this->filePath, $entry, FILE_APPEND | LOCK_EX)) {
-            error_log("Logger write failed: " . $entry);
-        }
+        file_put_contents($this->filePath, $entry, FILE_APPEND | LOCK_EX);
     }
 
     // PSR-3 methods
@@ -115,21 +113,5 @@ class Logger implements LoggerInterface {
         $this->log('debug', $message, $context);
     }
 
-    // Legacy methods for backward compatibility (additional methods)
-    public function legacyDebug(string $message, string $file, int $line): void {
-        $this->logInternal(self::LEVEL_DEBUG, $message, $file, $line);
-    }
-
-    public function legacyInfo(string $message, string $file, int $line): void {
-        $this->logInternal(self::LEVEL_INFO, $message, $file, $line);
-    }
-
-    public function legacyWarn(string $message, string $file, int $line): void {
-        $this->logInternal(self::LEVEL_WARN, $message, $file, $line);
-    }
-
-    public function legacyError(string $message, string $file, int $line): void {
-        $this->logInternal(self::LEVEL_ERROR, $message, $file, $line);
-    }
 }
 ?>

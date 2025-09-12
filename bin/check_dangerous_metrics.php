@@ -65,11 +65,12 @@ foreach ($requiredKeys as $key) {
 
 $container = new \App\DI\Container($config);
 $proxy = $container->get(\App\Interfaces\GrafanaClientInterface::class);
+$logger = $container->get(\App\Interfaces\LoggerInterface::class);
 $builder = new \App\Processors\CorridorBuilder($container);
 
-echo "Обновление кэша метрик Grafana...\n";
+$logger->info("Обновление кэша метрик Grafana...");
 $proxy->updateMetricsCache();
-echo "Кэш метрик обновлён.\n";
+$logger->info("Кэш метрик обновлён");
 
 $folderUid = 'dexnckrmtcpa8f';
 $dangerThreshold = 0.5;
@@ -81,25 +82,25 @@ $end = time();
 $step = 60;
 
 $metricNames = $proxy->getMetricNames();
-echo "Проверка {$periodHours} часов для " . count($metricNames) . " метрик...\n";
+$logger->info("Проверка {$periodHours} часов для " . count($metricNames) . " метрик");
 
 foreach ($metricNames as $metricName) {
-    echo "Проверка метрики: $metricName\n";
+    $logger->info("Проверка метрики: $metricName");
     
     $formatted = $builder->build($metricName, $start, $end, $step, ['anomaly_concern']);
     
     $query = $proxy->getQueryForMetric($metricName);
     if ($query === false) {
-        echo "Нет PromQL для создания dashboard для $metricName\n";
+        $logger->info("Нет PromQL для создания dashboard для $metricName");
     }
     
     if ($formatted['status'] !== 'success') {
-        echo "Ошибка при построении для $metricName: " . ($formatted['error'] ?? 'unknown') . "\n";
+        $logger->error("Ошибка при построении для $metricName: " . ($formatted['error'] ?? 'unknown'));
         continue;
     }
     
     if ($formatted['status'] !== 'success') {
-        echo "Ошибка при построении для $metricName: " . ($formatted['error'] ?? 'unknown') . "\n";
+        $logger->error("Ошибка при построении для $metricName: " . ($formatted['error'] ?? 'unknown'));
         continue;
     }
     
@@ -122,21 +123,21 @@ foreach ($metricNames as $metricName) {
     }
     
     if ($isDangerous) {
-        echo "Опасность обнаружена для $metricName (max_concern_above: $maxConcernAbove > $dangerThreshold)\n";
+        $logger->warning("Опасность обнаружена для $metricName (max_concern_above: $maxConcernAbove > $dangerThreshold)");
         if ($query === false) {
-            echo "Не создан дашборд: нет PromQL expr\n";
+            $logger->warning("Не создан дашборд: нет PromQL expr");
         } else {
             $dashboardUrl = $proxy->createDangerDashboard($metricName, $folderUid);
             if ($dashboardUrl) {
-                echo "Создан дашборд: $dashboardUrl\n";
+                $logger->info("Создан дашборд: $dashboardUrl");
             } else {
-                echo "Ошибка создания дашборда для $metricName\n";
+                $logger->error("Ошибка создания дашборда для $metricName");
             }
         }
     } else {
-        echo "Метрика $metricName в норме (max_concern_above: $maxConcernAbove)\n";
+        $logger->info("Метрика $metricName в норме (max_concern_above: $maxConcernAbove)");
     }
 }
 
-echo "Проверка завершена.\n";
+$logger->info("Проверка завершена");
 ?>

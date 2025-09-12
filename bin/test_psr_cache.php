@@ -22,6 +22,7 @@ $config = [
 
 $container = new Container($config);
 $cache = $container->get(\Psr\SimpleCache\SimpleCacheInterface::class);
+$logger = $container->get(\App\Interfaces\LoggerInterface::class);
 
 // Тестовые данные
 $testQuery = 'rate(http_requests_total{job="api-server"}[5m])';
@@ -48,36 +49,36 @@ $testValue = [
 
 // Установка
 if ($cache->set($testKey, $testValue)) {
-    echo "Значение успешно сохранено в PSR кэш.\n";
+    $logger->info("Значение успешно сохранено в PSR кэш");
 } else {
-    echo "Ошибка сохранения в PSR кэш.\n";
+    $logger->error("Ошибка сохранения в PSR кэш");
 }
 
 // Получение
 $retrieved = $cache->get($testKey);
 if ($retrieved !== null) {
-    echo "Значение успешно получено из PSR кэш.\n";
-    echo "DFT rebuild count: " . ($retrieved['meta']['dft_rebuild_count'] ?? 'N/A') . "\n";
+    $logger->info("Значение успешно получено из PSR кэш");
+    $logger->info("DFT rebuild count: " . ($retrieved['meta']['dft_rebuild_count'] ?? 'N/A'));
 } else {
-    echo "Значение не найдено в PSR кэш.\n";
+    $logger->info("Значение не найдено в PSR кэш");
 }
 
 // Проверка существования
 if ($cache->has($testKey)) {
-    echo "Кэш существует для ключа: $testKey\n";
+    $logger->info("Кэш существует для ключа: $testKey");
 }
 
 // Удаление
 if ($cache->delete($testKey)) {
-    echo "Значение успешно удалено из PSR кэш.\n";
+    $logger->info("Значение успешно удалено из PSR кэш");
 } else {
-    echo "Ошибка удаления из PSR кэш.\n";
+    $logger->error("Ошибка удаления из PSR кэш");
 }
 
 // Очистка
 if ($cache->clear()) {
-    echo "Кэш успешно очищен.\n";
+    $logger->info("Кэш успешно очищен");
 } else {
-    echo "Ошибка очистки кэша.\n";
+    $logger->error("Ошибка очистки кэша");
 }
 ?>

@@ -152,7 +152,7 @@ class Container
             return $service;
         } catch (\Throwable $e) {
             $logger = $this->get(LoggerInterface::class);
-            $logger->legacyError("Error resolving service '$id': " . $e->getMessage(), __FILE__, __LINE__);
+            $logger->error("Error resolving service '$id': " . $e->getMessage());
             throw $e;
         }
     }

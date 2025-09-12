@@ -7,22 +7,6 @@ ini_set('display_errors', 1);
 error_reporting(E_ALL);
 set_time_limit(300);
 
-$directories = [
-    __DIR__ . '/logs',
-    __DIR__ . '/cache'
-];
-
-foreach ($directories as $dir) {
-    if (!is_dir($dir)) {
-        if (!mkdir($dir, 0755, true)) {
-            error_log("Не удалось создать директорию: $dir");
-            http_response_code(500);
-            echo json_encode(['status' => 'error', 'error' => 'Internal server error']);
-            exit;
-        }
-    }
-}
-
 function normalizeQuery(string $q): string {
     return trim(preg_replace('/\s+/', ' ', str_replace(["\r","\n"], '', $q)));
 }
@@ -122,6 +106,21 @@ $container = new \App\DI\Container($config);
 $logger = $container->get(\App\Interfaces\LoggerInterface::class);
 $proxy = $container->get(\App\Interfaces\GrafanaClientInterface::class);
 
+$directories = [
+    __DIR__ . '/logs',
+    __DIR__ . '/cache'
+];
+
+foreach ($directories as $dir) {
+    if (!is_dir($dir)) {
+        if (!mkdir($dir, 0755, true)) {
+            $logger->error("Не удалось создать директорию: $dir");
+            $logger->error('Internal server error');
+            jsonError('Internal server error', 500);
+        }
+    }
+}
+
 // Автоматическое обновление кэша дашбордов, если пустой
 if (empty($proxy->getMetricNames())) {
     $logger->info("Кэш дашбордов пустой, автоматически обновляем...");
@@ -209,6 +208,7 @@ if ($method==='POST' && $path==='/api/v1/query_range') {
         $step
     );
 
+    $logger->info("Query range result built for query: " . $params['query']);
     echo json_encode($result);
     exit;
 }
