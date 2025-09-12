@@ -265,9 +265,16 @@ class GrafanaProxyClient implements GrafanaClientInterface
         $results = $data['results'] ?? [];
         foreach ($results as $frameSet) {
             foreach ($frameSet['frames'] as $frame) {
+                if (!isset($frame['data']['values'][0]) || !isset($frame['schema']['fields'])) {
+                    $this->logger->warning("Skipping frame without times or fields for metric {$info['dash_title']}__{$info['panel_title']}");
+                    continue;
+                }
                 $times  = $frame['data']['values'][0];
                 $fields = $frame['schema']['fields'];
                 for ($i = 1, $n = count($fields); $i < $n; $i++) {
+                    if (!isset($frame['data']['values'][$i])) {
+                        continue;
+                    }
                     $vals   = $frame['data']['values'][$i];
                     $labels = $fields[$i]['labels'] ?? [];
                     $labels['__name__'] = $info['dash_title'] . '__' . $info['panel_title'];
@@ -279,7 +286,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
                         $info['panel_id']
                     );
                     foreach ($times as $idx => $ts) {
-                        if ($vals[$idx] === null) {
+                        if (!isset($vals[$idx]) || $vals[$idx] === null) {
                             continue;
                         }
                         $out[] = [

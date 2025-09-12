@@ -78,26 +78,33 @@ class CorridorBuilder
         // 1) live-данные
         PerformanceMonitor::start('prometheus_fetch');
         $raw = $this->client->queryRange($query, $start, $end, $step);
-        if (empty($raw)) {
-            $this->logger->warning("No data from Grafana for query $query");
-            return $this->responseFormatter->formatError("No data from Grafana");
-        }
         PerformanceMonitor::end('prometheus_fetch');
 
         $grouped = $this->dataProcessor->groupData($raw);
+        if (empty($raw)) {
+            $this->logger->warning("No live data from Grafana for query $query");
+        }
 
         // 2) исторические данные
         $histStep = $this->config['corrdor_params']['step'];
         $offset   = $this->config['corrdor_params']['historical_offset_days'];
         $period   = $this->config['corrdor_params']['historical_period_days'];
-        $histEnd  = time() - $offset * 86400;
-        $histStart= $histEnd - $period * 86400;
+        $histEnd  = (int)(time() - $offset * 86400);
+        $histStart= (int)($histEnd - $period * 86400);
 
         PerformanceMonitor::start('long_term_fetch');
         $longRaw = $this->client->queryRange($query, $histStart, $histEnd, $histStep);
         PerformanceMonitor::end('long_term_fetch');
 
         $longGrouped = $this->dataProcessor->groupData($longRaw);
+
+        if (empty($grouped) && !empty($longGrouped)) {
+            $grouped = [];
+            foreach ($longGrouped as $labelsJson => $hist) {
+                $grouped[$labelsJson] = []; // empty original for nodata
+            }
+            $this->logger->info("Filled grouped with empty originals from historical labels for nodata query: $query");
+        }
 
         // 3) по каждой группе
         foreach ($grouped as $labelsJson => $orig) {
@@ -165,8 +172,8 @@ class CorridorBuilder
             $belowConcerns = $this->anomalyDetector->calculateIntegralMetric(
                 $currStats['below'], $cached['meta']['anomaly_stats']['below'] ?? []
             );
-            $aboveC = $aboveConcerns['total_concern'];
-            $belowC = $belowConcerns['total_concern'];
+            $aboveC = $aboveConcerns['total_concern'] * min(1, ($currStats['above']['time_outside_percent'] ?? 0) / 100);
+            $belowC = $belowConcerns['total_concern'] * min(1, ($currStats['below']['time_outside_percent'] ?? 0) / 100);
    
             $aboveSums = $this->anomalyDetector->calculateIntegralMetricSum(
                 $currStats['above'], $cached['meta']['anomaly_stats']['above'] ?? [], $wsize
@@ -201,7 +208,12 @@ class CorridorBuilder
                 'anomaly_concern_below_sum'=> $belowS,
                 'dft_rebuild_count'        => $cached['meta']['dft_rebuild_count'] ?? 0,
             ];
-
+    
+            if (empty($orig)) {
+                $item['nodata'] = [['time' => time(), 'value' => 1.0]];
+                $this->logger->info("Added nodata flag for query: $query, labels: $labelsJson");
+            }
+    
             $results[] = $item;
         }
 

@@ -50,8 +50,43 @@ class AnomalyDetector implements AnomalyDetectorInterface {
         bool $isHistorical = false,
         int $actualStep = 60
     ): array {
-        if (empty($dataPoints) || empty($upperBound) || empty($lowerBound)) {
-            throw new \InvalidArgumentException('Data points, upper and lower bounds must not be empty');
+        if (empty($upperBound) || empty($lowerBound)) {
+            throw new \InvalidArgumentException('Upper and lower bounds must not be empty');
+        }
+        if (empty($dataPoints)) {
+            $this->logger->info("No data points provided, returning zero anomaly stats");
+            $zeroStats = [
+                'time_outside_percent' => 0,
+                'anomaly_count'        => 0,
+                'durations'            => [],
+                'sizes'                => [],
+                'direction'            => ''
+            ];
+            $above = array_merge($zeroStats, ['direction' => 'above']);
+            $below = array_merge($zeroStats, ['direction' => 'below']);
+            $combined = [
+                'time_outside_percent' => 0,
+                'anomaly_count'        => 0
+            ];
+            if ($raw || $isHistorical) {
+                return [
+                    'above' => $above,
+                    'below' => $below,
+                    'combined' => $combined
+                ];
+            } else {
+                return [
+                    'above' => [
+                        'time_outside_percent' => $above['time_outside_percent'],
+                        'anomaly_count' => $above['anomaly_count']
+                    ],
+                    'below' => [
+                        'time_outside_percent' => $below['time_outside_percent'],
+                        'anomaly_count' => $below['anomaly_count']
+                    ],
+                    'combined' => $combined
+                ];
+            }
         }
         $n = min([count($dataPoints), count($upperBound), count($lowerBound)]);
         $this->logger->warning(
