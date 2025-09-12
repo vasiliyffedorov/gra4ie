@@ -12,10 +12,18 @@ class AnomalyDetector implements AnomalyDetectorInterface {
     private LoggerInterface $logger;
 
     public function __construct(array $config, LoggerInterface $logger) {
+        if (!isset($config['corrdor_params']['step']) || !isset($config['cache']['percentiles'])) {
+            throw new \InvalidArgumentException('Config must contain corrdor_params.step and cache.percentiles');
+        }
         $this->config = $config;
         $this->logger = $logger;
     }
 
+    /**
+     * Обновляет конфигурацию детектора аномалий.
+     *
+     * @param array $config Новый конфиг: ['corrdor_params' => [...], 'cache' => [...]]
+     */
     public function updateConfig(array $config): void {
         $this->config = $config;
     }
@@ -23,13 +31,14 @@ class AnomalyDetector implements AnomalyDetectorInterface {
     /**
      * Рассчитывает статистику аномалий.
      *
-     * @param array      $dataPoints        Сырые точки [ ['time'=>int, 'value'=>float], ... ]
-     * @param array      $upperBound        Коридор сверху
-     * @param array      $lowerBound        Коридор снизу
-     * @param array|null $percentileConfig  Конфиг перцентилей (только для истории)
-     * @param bool       $raw               Если true — вернуть сырые массивы длительностей/размеров
-     *
-     * @return array{above: array, below: array, combined: array}
+     * @param array $dataPoints Сырые точки данных: [['time' => int, 'value' => float], ...]
+     * @param array $upperBound Верхняя граница коридора: [['time' => int, 'value' => float], ...]
+     * @param array $lowerBound Нижняя граница коридора: [['time' => int, 'value' => float], ...]
+     * @param array|null $percentileConfig Конфигурация перцентилей для исторических данных (опционально)
+     * @param bool $raw Если true, возвращает сырые массивы durations/sizes
+     * @param bool $isHistorical Если true, сжимает историю по перцентилям
+     * @return array Статистика: ['above' => ['time_outside_percent' => float, 'anomaly_count' => int, 'durations' => array, 'sizes' => array, 'direction' => string], 'below' => [...], 'combined' => ['time_outside_percent' => float, 'anomaly_count' => int]]
+     * @throws \InvalidArgumentException Если входные массивы пусты или несоответствуют по размеру
      */
     public function calculateAnomalyStats(
         array $dataPoints,
@@ -40,29 +49,31 @@ class AnomalyDetector implements AnomalyDetectorInterface {
         bool $isHistorical = false
     ): array {
         if (empty($dataPoints) || empty($upperBound) || empty($lowerBound)) {
-            $this->logger->warn(
-                "Недостаточно данных для расчёта статистики аномалий: "
-                . "dataPoints=" . count($dataPoints)
-                . ", upperBound=" . count($upperBound)
-                . ", lowerBound=" . count($lowerBound),
-                __FILE__, __LINE__
-            );
-            $zeroStats = [
-                'time_outside_percent' => 0,
-                'anomaly_count'        => 0,
-                'durations'            => [],
-                'sizes'                => [],
-                'direction'            => ''
-            ];
-            return [
-                'above'    => array_merge($zeroStats, ['direction'=>'above']),
-                'below'    => array_merge($zeroStats, ['direction'=>'below']),
-                'combined' => [
-                    'time_outside_percent' => 0,
-                    'anomaly_count'        => 0
-                ]
-            ];
+            throw new \InvalidArgumentException('Data points, upper and lower bounds must not be empty');
         }
+        $n = min([count($dataPoints), count($upperBound), count($lowerBound)]);
+        $this->logger->warning(
+            "Размеры массивов не совпадают, используются первые $n элементов: "
+            . "dataPoints=" . count($dataPoints)
+            . ", upperBound=" . count($upperBound)
+            . ", lowerBound=" . count($lowerBound),
+            ['file' => __FILE__, 'line' => __LINE__]
+        );
+        $zeroStats = [
+            'time_outside_percent' => 0,
+            'anomaly_count'        => 0,
+            'durations'            => [],
+            'sizes'                => [],
+            'direction'            => ''
+        ];
+        return [
+            'above'    => array_merge($zeroStats, ['direction'=>'above']),
+            'below'    => array_merge($zeroStats, ['direction'=>'below']),
+            'combined' => [
+                'time_outside_percent' => 0,
+                'anomaly_count'        => 0
+            ]
+        ];
 
         // Сортируем все массивы по времени
         usort($dataPoints, fn($a, $b) => $a['time'] <=> $b['time']);
@@ -205,14 +216,18 @@ class AnomalyDetector implements AnomalyDetectorInterface {
      }
 
     /**
-     * Рассчитывает интегральную метрику для аномалий (separate for duration and size).
+     * Рассчитывает интегральную метрику обеспокоенности аномалиями отдельно для длительности и размера.
      *
-     * @param array $currentStats Текущие статистики аномалий {durations: [], sizes: []}
-     * @param array $historicalStats Исторические сжатые статистики аномалий
-     * @return array {duration_concern: float, size_concern: float, total_concern: float}
+     * @param array $currentStats Текущие статистики: ['durations' => [int, ...], 'sizes' => [float, ...]]
+     * @param array $historicalStats Исторические сжатые статистики: ['durations' => [int, ...], 'sizes' => [float, ...]]
+     * @return array Метрики: ['duration_concern' => float, 'size_concern' => float, 'total_concern' => float]
+     * @throws \InvalidArgumentException Если статистики пусты
      */
     public function calculateIntegralMetric(array $currentStats, array $historicalStats): array
     {
+        if (empty($currentStats) || empty($historicalStats)) {
+            throw new \InvalidArgumentException('Current and historical stats must not be empty');
+        }
         $durationMult = $this->config['corrdor_params']['default_percentiles']['duration_multiplier'] ?? 1;
         $sizeMult = $this->config['corrdor_params']['default_percentiles']['size_multiplier'] ?? 1;
         $durationP = $this->config['corrdor_params']['default_percentiles']['duration'] ?? 75;
@@ -254,15 +269,19 @@ class AnomalyDetector implements AnomalyDetectorInterface {
     }
 
     /**
-     * Рассчитывает сумму интегральной метрики с учетом размера окна (separate for duration and size).
+     * Рассчитывает сумму интегральной метрики с учетом размера окна, отдельно для длительности и размера.
      *
-     * @param array $currentStats Текущие статистики аномалий
-     * @param array $historicalStats Исторические статистики аномалий
-     * @param int $windowSize Размер окна
-     * @return array {duration_concern_sum: float, size_concern_sum: float, total_concern_sum: float}
+     * @param array $currentStats Текущие статистики: ['durations' => [int, ...], 'sizes' => [float, ...]]
+     * @param array $historicalStats Исторические статистики: ['durations' => [int, ...], 'sizes' => [float, ...]]
+     * @param int $windowSize Размер окна для умножения
+     * @return array Суммы: ['duration_concern_sum' => float, 'size_concern_sum' => float, 'total_concern_sum' => float]
+     * @throws \InvalidArgumentException Если windowSize <= 0 или статистики пусты
      */
     public function calculateIntegralMetricSum(array $currentStats, array $historicalStats, int $windowSize): array
     {
+        if ($windowSize <= 0) {
+            throw new \InvalidArgumentException('Window size must be positive');
+        }
         $concerns = $this->calculateIntegralMetric($currentStats, $historicalStats);
         return [
             'duration_concern_sum' => $concerns['duration_concern'] * $windowSize,

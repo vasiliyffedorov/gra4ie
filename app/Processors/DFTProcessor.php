@@ -14,12 +14,28 @@ class DFTProcessor implements DFTProcessorInterface {
     private FourierTransformer $fourierTransformer;
 
     public function __construct(array $config, Logger $logger) {
+        if (!isset($config['corrdor_params']['step']) || !isset($config['corrdor_params']['max_harmonics']) || !isset($config['corrdor_params']['use_common_trend'])) {
+            throw new \InvalidArgumentException('Config must contain corrdor_params with step, max_harmonics, and use_common_trend');
+        }
         $this->config = $config;
         $this->logger = $logger;
         $this->fourierTransformer = new \App\Processors\FourierTransformer($logger);
     }
 
+    /**
+     * Генерирует DFT (дискретное преобразование Фурье) для верхней и нижней границ коридора.
+     *
+     * @param array $bounds Массив границ: ['upper' => [['time' => int, 'value' => float], ...], 'lower' => [['time' => int, 'value' => float], ...]]
+     * @param int $start Начальное время диапазона
+     * @param int $end Конечное время диапазона
+     * @param int $step Шаг времени
+     * @return array Результат DFT: ['upper' => ['coefficients' => array, 'trend' => ['slope' => float, 'intercept' => float]], 'lower' => [...]]
+     * @throws \InvalidArgumentException Если bounds пусты или некорректны
+     */
     public function generateDFT(array $bounds, int $start, int $end, int $step): array {
+        if (empty($bounds['upper']) || empty($bounds['lower'])) {
+            throw new \InvalidArgumentException('Bounds must contain non-empty upper and lower arrays');
+        }
         $upperValues = array_column($bounds['upper'], 'value');
         $lowerValues = array_column($bounds['lower'], 'value');
         $times = array_column($bounds['upper'], 'time');
@@ -74,31 +90,36 @@ class DFTProcessor implements DFTProcessorInterface {
             return ['slope' => 0, 'intercept' => $values[0] ?? 0];
         }
 
-        // Вычисляем линейную регрессию по всем точкам
-        $sumX = array_sum($times);
-        $sumY = array_sum($values);
-        $sumXY = 0;
-        $sumXX = 0;
+        try {
+            // Вычисляем линейную регрессию по всем точкам
+            $sumX = array_sum($times);
+            $sumY = array_sum($values);
+            $sumXY = 0;
+            $sumXX = 0;
 
-        for ($i = 0; $i < $n; $i++) {
-            $sumXY += $times[$i] * $values[$i];
-            $sumXX += $times[$i] * $times[$i];
+            for ($i = 0; $i < $n; $i++) {
+                $sumXY += $times[$i] * $values[$i];
+                $sumXX += $times[$i] * $times[$i];
+            }
+
+            $meanX = $sumX / $n;
+            $meanY = $sumY / $n;
+            $denominator = $sumXX - $n * $meanX * $meanX;
+
+            if (abs($denominator) < 1e-10) {
+                $this->logger->warn("Нулевой или почти нулевой знаменатель при вычислении тренда");
+                return ['slope' => 0, 'intercept' => $meanY];
+            }
+
+            $slope = ($sumXY - $n * $meanX * $meanY) / $denominator;
+            $intercept = $meanY - $slope * $meanX;
+
+            $this->logger->info("Вычислен тренд: slope=$slope, intercept=$intercept");
+            return ['slope' => $slope, 'intercept' => $intercept];
+        } catch (\Throwable $e) {
+            $this->logger->error("Error calculating linear trend: " . $e->getMessage(), __FILE__, __LINE__);
+            return ['slope' => 0, 'intercept' => array_sum($values) / $n];
         }
-
-        $meanX = $sumX / $n;
-        $meanY = $sumY / $n;
-        $denominator = $sumXX - $n * $meanX * $meanX;
-
-        if (abs($denominator) < 1e-10) {
-            $this->logger->warn("Нулевой или почти нулевой знаменатель при вычислении тренда");
-            return ['slope' => 0, 'intercept' => $meanY];
-        }
-
-        $slope = ($sumXY - $n * $meanX * $meanY) / $denominator;
-        $intercept = $meanY - $slope * $meanX;
-
-        $this->logger->info("Вычислен тренд: slope=$slope, intercept=$intercept");
-        return ['slope' => $slope, 'intercept' => $intercept];
     }
 
     private function normalizeData(array $values, array $times, array $trend): array {
@@ -110,7 +131,25 @@ class DFTProcessor implements DFTProcessorInterface {
         return $normalized;
     }
 
+    /**
+     * Восстанавливает полную DFT-траекторию на основе коэффициентов и тренда.
+     *
+     * @param array $coefficients Массив коэффициентов DFT: [['amplitude' => float, 'phase' => float], ...]
+     * @param int $start Начальное время восстановления
+     * @param int $end Конечное время восстановления
+     * @param int $step Шаг времени
+     * @param array $meta Метаданные: ['dataStart' => int, 'totalDuration' => int, ...]
+     * @param array|null $trend Тренд: ['slope' => float, 'intercept' => float]
+     * @return array Восстановленные точки: [['time' => int, 'value' => float], ...]
+     * @throws \InvalidArgumentException Если meta некорректны или coefficients пусты
+     */
     public function restoreFullDFT(array $coefficients, int $start, int $end, int $step, array $meta, ?array $trend = null): array {
+        if (empty($coefficients)) {
+            throw new \InvalidArgumentException('Coefficients array cannot be empty');
+        }
+        if (!isset($meta['dataStart']) || !isset($meta['totalDuration'])) {
+            throw new \InvalidArgumentException('Meta must contain dataStart and totalDuration');
+        }
         $dataStart = $meta['dataStart'] ?? $start;
         $totalDuration = $meta['totalDuration'] ?? ($end - $start);
         $restored = [];

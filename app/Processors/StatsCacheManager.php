@@ -31,6 +31,9 @@ class StatsCacheManager {
         AnomalyDetectorInterface $anomalyDetector,
         GrafanaClientInterface $client
     ) {
+        if (!isset($config['corrdor_params']['step']) || !isset($config['cache'])) {
+            throw new \InvalidArgumentException('Config must contain corrdor_params.step and cache');
+        }
         $this->config = $config;
         $this->logger = $logger;
         $this->cacheManager = $cacheManager;
@@ -42,7 +45,15 @@ class StatsCacheManager {
     }
 
     /**
-     * Пересчет DFT + статистики аномалий с сохранением в кэш
+     * Пересчитывает DFT и статистики аномалий, сохраняя результат в кэш.
+     *
+     * @param string $query Запрос для Grafana
+     * @param string $labelsJson JSON-строка с лейблами метрики
+     * @param array $liveData Живые данные (не используются в расчете, но для совместимости)
+     * @param array $historyData Исторические данные: [['time' => int, 'value' => float], ...]
+     * @param array $currentConfig Текущая конфигурация: ['corrdor_params' => [...], ...]
+     * @return array Payload с meta, dft_upper и dft_lower
+     * @throws \InvalidArgumentException Если historyData недостаточно или config некорректен
      */
     public function recalculateStats(
         string $query,
@@ -51,6 +62,13 @@ class StatsCacheManager {
         array $historyData,
         array $currentConfig
     ): array {
+        if (empty($query) || empty($labelsJson) || empty($historyData)) {
+            throw new \InvalidArgumentException('Query, labelsJson and historyData must not be empty');
+        }
+        if (!isset($currentConfig['corrdor_params']['step']) || !isset($currentConfig['corrdor_params']['min_data_points'])) {
+            throw new \InvalidArgumentException('Config must contain corrdor_params.step and min_data_points');
+        }
+
         // Если метрика помечена как unused — ничего не делаем
         $cached = $this->cacheManager->loadFromCache($query, $labelsJson);
         if (isset($cached['meta']['labels']['unused_metric'])) {
@@ -61,7 +79,7 @@ class StatsCacheManager {
         // Обновляем конфиг в процессорах
         $this->dataProcessor->updateConfig($currentConfig);
         $this->anomalyDetector->updateConfig($currentConfig);
-    
+        
         // Рассчитываем DFT и статистики
         $range = $this->dataProcessor->getActualDataRange($historyData);
         $longStart = $range['start'];

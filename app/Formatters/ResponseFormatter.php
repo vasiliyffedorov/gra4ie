@@ -3,18 +3,28 @@ declare(strict_types=1);
 
 namespace App\Formatters;
 
-use App\Utilities\Logger;
-use App\Processors\AnomalyDetector;
+use App\Interfaces\LoggerInterface;
+use App\Interfaces\AnomalyDetectorInterface;
 
 class ResponseFormatter {
     private $showMetrics;
     private $config;
     private $anomalyDetector;
+    private LoggerInterface $logger;
 
-    public function __construct(array $config) {
+    /**
+     * @param array $config Конфигурация
+     * @param LoggerInterface $logger Логгер
+     * @param AnomalyDetectorInterface $anomalyDetector Детектор аномалий
+     */
+    public function __construct(array $config, LoggerInterface $logger, AnomalyDetectorInterface $anomalyDetector) {
+        if (!isset($config['log_file'])) {
+            throw new \InvalidArgumentException('Config must contain log_file');
+        }
         $this->config = $config;
+        $this->logger = $logger;
+        $this->anomalyDetector = $anomalyDetector;
         $this->updateConfig($config);
-        $this->anomalyDetector = new \App\Processors\AnomalyDetector($config, new \App\Utilities\Logger($config['log_file'], \App\Utilities\Logger::LEVEL_INFO));
     }
 
     private function getLogLevel(string $logLevel): int {
@@ -26,9 +36,15 @@ class ResponseFormatter {
         return $logLevelMap[strtoupper($logLevel)] ?? \App\Utilities\Logger::LEVEL_INFO;
     }
 
+    /**
+     * Обновляет конфигурацию форматтера.
+     *
+     * @param array $config Конфигурация: ['dashboard' => ['show_metrics' => array|string], ...]
+     * @throws \InvalidArgumentException Если show_metrics некорректен
+     */
     public function updateConfig(array $config): void {
         $this->config = $config;
-        $this->showMetrics = $config['dashboard']['show_metrics'] ?? [
+        $showMetrics = $config['dashboard']['show_metrics'] ?? [
             'original',
             'nodata',
             'dft_upper',
@@ -39,9 +55,25 @@ class ResponseFormatter {
             'anomaly_concern_sum',
             'historical_metrics'
         ];
+        if (!is_array($showMetrics) && !is_string($showMetrics)) {
+            throw new \InvalidArgumentException('show_metrics must be array or string');
+        }
+        $this->showMetrics = $showMetrics;
     }
 
+    /**
+     * Форматирует результаты для Grafana в формате matrix.
+     *
+     * @param array $results Массив результатов: [['labels' => array, 'original' => array, 'dft_upper' => array, ...], ...]
+     * @param string $query Оригинальный запрос
+     * @param string|array|null $filter Фильтр метрик (строка через запятую или массив; если null, использует config)
+     * @return array Форматированный ответ: ['status' => string, 'data' => ['resultType' => 'matrix', 'result' => array]]
+     * @throws \RuntimeException Если конфигурация метрик некорректна
+     */
     public function formatForGrafana(array $results, string $query, string|array|null $filter = null): array {
+        if (empty($results) || empty($query)) {
+            throw new \RuntimeException('Results and query must not be empty');
+        }
         $formatted = [
             'status' => 'success',
             'data' => [
@@ -60,12 +92,7 @@ class ResponseFormatter {
         }
 
         if (!is_array($metricsToShow)) {
-            $this->anomalyDetector->logger->error("Invalid dashboard.show_metrics configuration: expected array, got " . gettype($metricsToShow));
-            return [
-                'status' => 'error',
-                'errorType' => 'invalid_configuration',
-                'error' => "Invalid dashboard.show_metrics: expected comma-separated list (e.g., 'dft_lower,anomaly_concern'), got '$metricsToShow'"
-            ];
+            throw new \RuntimeException("Invalid metrics filter: expected array, got " . gettype($metricsToShow));
         }
 
         foreach ($results as $result) {
@@ -295,9 +322,19 @@ class ResponseFormatter {
     }
 
     /**
-     * Вычисляет верхнюю и нижнюю границы для данных (placeholder для недостатка истории).
+     * Вычисляет placeholder для верхней и нижней границ при недостатке данных.
+     *
+     * @param array $data Исторические данные (не используются для placeholder)
+     * @param int $start Начальное время
+     * @param int $end Конечное время
+     * @param int $step Шаг времени
+     * @return array Границы: ['upper' => [['time' => int, 'value' => float], ...], 'lower' => [...]]
+     * @throws \InvalidArgumentException Если step <= 0 или start > end
      */
     public function calculateBounds(array $data, int $start, int $end, int $step): array {
+        if ($step <= 0 || $start > $end) {
+            throw new \InvalidArgumentException('Step must be positive and start <= end');
+        }
         $upper = [];
         $lower = [];
         for ($t = $start; $t <= $end; $t += $step) {
@@ -307,7 +344,20 @@ class ResponseFormatter {
         return ['upper' => $upper, 'lower' => $lower];
     }
 
+    /**
+     * Ресэмплирует DFT-данные с интерполяцией на новый шаг.
+     *
+     * @param array $dftData Оригинальные DFT-точки: [['time' => int, 'value' => float], ...]
+     * @param int $start Новое начальное время
+     * @param int $end Новое конечное время
+     * @param int $step Новый шаг времени
+     * @return array Ресэмплированные точки: [['time' => int, 'value' => float], ...]
+     * @throws \InvalidArgumentException Если step <= 0 или dftData пусты
+     */
     public function resampleDFT(array $dftData, int $start, int $end, int $step): array {
+        if (empty($dftData) || $step <= 0 || $start > $end) {
+            throw new \InvalidArgumentException('dftData must not be empty, step > 0, start <= end');
+        }
         $resampled = [];
         for ($currentTime = $start; $currentTime <= $end; $currentTime += $step) {
             $resampled[] = [

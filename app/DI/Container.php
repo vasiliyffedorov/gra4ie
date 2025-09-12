@@ -104,12 +104,20 @@ class Container
             return new StatsCalculator($config, $logger, $dataProcessor, $dftProcessor, $anomalyDetector);
         };
     
+        // ResponseFormatter
+        $this->services[\App\Formatters\ResponseFormatter::class] = function () {
+            $config = $this->get('config');
+            $logger = $this->get(LoggerInterface::class);
+            $anomalyDetector = $this->get(AnomalyDetectorInterface::class);
+            return new \App\Formatters\ResponseFormatter($config, $logger, $anomalyDetector);
+        };
+
         // StatsCacheManager
         $this->services[\App\Processors\StatsCacheManager::class] = function () {
             $config = $this->get('config');
             $logger = $this->get(LoggerInterface::class);
             $cacheManager = $this->get(CacheManagerInterface::class);
-            $responseFormatter = new \App\Formatters\ResponseFormatter($config);
+            $responseFormatter = $this->get(\App\Formatters\ResponseFormatter::class);
             $dataProcessor = $this->get(DataProcessorInterface::class);
             $dftProcessor = $this->get(DFTProcessorInterface::class);
             $anomalyDetector = $this->get(AnomalyDetectorInterface::class);
@@ -133,15 +141,20 @@ class Container
         }
 
         if (!isset($this->services[$id])) {
-            throw new Exception("Service '$id' not found in container.");
+            throw new \InvalidArgumentException("Service '$id' not found in container.");
         }
 
-        $service = $this->services[$id]();
-        if (is_object($service)) {
-            $this->instances[$id] = $service;
+        try {
+            $service = $this->services[$id]();
+            if (is_object($service)) {
+                $this->instances[$id] = $service;
+            }
+            return $service;
+        } catch (\Throwable $e) {
+            $logger = $this->get(LoggerInterface::class);
+            $logger->legacyError("Error resolving service '$id': " . $e->getMessage(), __FILE__, __LINE__);
+            throw $e;
         }
-
-        return $service;
     }
 
     public function has(string $id): bool

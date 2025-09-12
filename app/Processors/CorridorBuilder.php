@@ -41,7 +41,7 @@ class CorridorBuilder
         $this->dataProcessor = $container->get(DataProcessorInterface::class);
         $this->dftProcessor = $container->get(DFTProcessorInterface::class);
         $this->anomalyDetector = $container->get(AnomalyDetectorInterface::class);
-        $this->responseFormatter = new \App\Formatters\ResponseFormatter($this->config);
+        $this->responseFormatter = $container->get(\App\Formatters\ResponseFormatter::class);
         $this->statsCacheManager = $container->get(StatsCacheManager::class);
 
         \App\Utilities\PerformanceMonitor::init(
