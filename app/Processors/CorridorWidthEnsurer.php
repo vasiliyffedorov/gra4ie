@@ -12,10 +12,10 @@ class CorridorWidthEnsurer
         array $lower,
         float $upperZeroAmp,
         float $lowerZeroAmp,
-        ?array $upperTrend = null,
-        ?array $lowerTrend = null,
         array $config,
-        Logger $logger
+        Logger $logger,
+        ?array $upperTrend = null,
+        ?array $lowerTrend = null
     ): array {
         $minWidthFactor = $config['corrdor_params']['min_corridor_width_factor'] ?? 0.1;
         $minWidth = $minWidthFactor * abs($upperZeroAmp - $lowerZeroAmp);

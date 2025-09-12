@@ -14,6 +14,12 @@ class SQLiteCacheDatabase
     {
         $this->logger = $logger;
         $isNewDb = !file_exists($dbPath);
+
+        $dir = dirname($dbPath);
+        if (!is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+
         $this->db = new \PDO("sqlite:" . $dbPath);
         $this->db->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
 

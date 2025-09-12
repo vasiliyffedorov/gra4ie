@@ -50,6 +50,11 @@ class Logger implements LoggerInterface {
 
         $this->rotateIfNeeded();
 
+        $dir = dirname($this->filePath);
+        if (!is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+
         [$defaultFile, $defaultLine] = $this->getFileAndLine();
         $file = $file ?? $defaultFile;
         $line = $line ?? $defaultLine;

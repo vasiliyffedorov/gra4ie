@@ -86,7 +86,7 @@ class CorridorBuilder
         }
 
         // 2) исторические данные
-        $histStep = $this->config['corrdor_params']['step'];
+        $histStep = $step;
         $offset   = $this->config['corrdor_params']['historical_offset_days'];
         $period   = $this->config['corrdor_params']['historical_period_days'];
         $histEnd  = (int)(time() - $offset * 86400);
@@ -137,22 +137,14 @@ class CorridorBuilder
                 $cached['meta'], $cached['dft_lower']['trend']
             );
 
-            // автоматическое масштабирование при разном step
-            $factor = $step / $histStep;
-            if (abs($factor - 1) > 1e-6) {
-                foreach ($upper as &$pt) { $pt['value'] *= $factor; }
-                foreach ($lower as &$pt) { $pt['value'] *= $factor; }
-                $this->logger->info("Автоматическое масштабирование коридора для метрики: {$factor}");
-            }
-
             // корректируем ширину
             list($cU,$cL) = CorridorWidthEnsurer::ensureWidth(
                 $upper, $lower,
                 $cached['dft_upper']['coefficients'][0]['amplitude'] ?? 0,
                 $cached['dft_lower']['coefficients'][0]['amplitude'] ?? 0,
+                $this->config, $this->logger,
                 $cached['dft_upper']['trend'],
-                $cached['dft_lower']['trend'],
-                $this->config, $this->logger
+                $cached['dft_lower']['trend']
             );
 
             // аномалии
