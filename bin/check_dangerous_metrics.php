@@ -75,14 +75,16 @@ $logger->info("Кэш метрик обновлён");
 $folderUid = 'dexnckrmtcpa8f';
 $dangerThreshold = 0.5;
 
-// Параметры для проверки: последние 6 часов, step 60s
-$periodHours = 6;
+// Параметры для проверки: последние 1 час, step 300s (5 мин, для ускорения)
+$periodHours = 1;
 $start = time() - $periodHours * 3600;
 $end = time();
-$step = 60;
+$step = 300;
 
 $metricNames = $proxy->getMetricNames();
 $logger->info("Проверка {$periodHours} часов для " . count($metricNames) . " метрик");
+
+$dangerousCount = 0;
 
 foreach ($metricNames as $metricName) {
     $logger->info("Проверка метрики: $metricName");
@@ -121,8 +123,12 @@ foreach ($metricNames as $metricName) {
             }
         }
     }
+
+    $status = $isDangerous ? 'Dangerous' : 'Safe';
+    echo "Metric: $metricName, concern: $maxConcernAbove, status: $status\n";
     
     if ($isDangerous) {
+        $dangerousCount++;
         $logger->warning("Опасность обнаружена для $metricName (max_concern_above: $maxConcernAbove > $dangerThreshold)");
         if ($query === false) {
             $logger->warning("Не создан дашборд: нет PromQL expr");
@@ -130,6 +136,7 @@ foreach ($metricNames as $metricName) {
             $dashboardUrl = $proxy->createDangerDashboard($metricName, $folderUid);
             if ($dashboardUrl) {
                 $logger->info("Создан дашборд: $dashboardUrl");
+                echo "Dashboard created: $dashboardUrl\n";
             } else {
                 $logger->error("Ошибка создания дашборда для $metricName");
             }
@@ -140,4 +147,5 @@ foreach ($metricNames as $metricName) {
 }
 
 $logger->info("Проверка завершена");
+echo "Check completed. Dangerous metrics: $dangerousCount out of " . count($metricNames) . "\n";
 ?>

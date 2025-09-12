@@ -12,6 +12,8 @@ class CorridorWidthEnsurer
         array $lower,
         float $upperZeroAmp,
         float $lowerZeroAmp,
+        ?array $upperTrend = null,
+        ?array $lowerTrend = null,
         array $config,
         Logger $logger
     ): array {
@@ -40,13 +42,19 @@ class CorridorWidthEnsurer
 
         // если ни одна точка не подошла — строим равномерный коридор
         if (empty($breakPoints)) {
-            $mid   = ($upperZeroAmp + $lowerZeroAmp) / 2;
+            $mid = 0;
+            if ($upperTrend !== null && $lowerTrend !== null && isset($upperTrend['intercept']) && isset($lowerTrend['intercept'])) {
+                $mid = ($upperTrend['intercept'] + $lowerTrend['intercept']) / 2;
+                $logger->info("Использован средний intercept трендов для mid: $mid");
+            } else {
+                $mid = ($upperZeroAmp + $lowerZeroAmp) / 2;
+                $logger->info("Использованы нулевые гармоники для mid: $mid");
+            }
             $halfW = $minWidth / 2;
             foreach ($upper as $i => $p) {
                 $correctedUpper[$i]['value'] = $mid + $halfW;
                 $correctedLower[$i]['value'] = $mid - $halfW;
             }
-            $logger->info("Использованы нулевые гармоники для коридора");
             return [$correctedUpper, $correctedLower];
         }
 

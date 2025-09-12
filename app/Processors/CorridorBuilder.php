@@ -130,10 +130,9 @@ class CorridorBuilder
                 $cached['meta'], $cached['dft_lower']['trend']
             );
 
-            // автоматическое масштабирование на основе флага метрики
+            // автоматическое масштабирование при разном step
             $factor = $step / $histStep;
-            $scaleCorridor = $cached['meta']['scaleCorridor'] ?? false;
-            if ($scaleCorridor && abs($factor-1) > 1e-6) {
+            if (abs($factor - 1) > 1e-6) {
                 foreach ($upper as &$pt) { $pt['value'] *= $factor; }
                 foreach ($lower as &$pt) { $pt['value'] *= $factor; }
                 $this->logger->info("Автоматическое масштабирование коридора для метрики: {$factor}");
@@ -144,6 +143,8 @@ class CorridorBuilder
                 $upper, $lower,
                 $cached['dft_upper']['coefficients'][0]['amplitude'] ?? 0,
                 $cached['dft_lower']['coefficients'][0]['amplitude'] ?? 0,
+                $cached['dft_upper']['trend'],
+                $cached['dft_lower']['trend'],
                 $this->config, $this->logger
             );
 
@@ -152,7 +153,8 @@ class CorridorBuilder
                 $orig, $cU, $cL,
                 $this->config['corrdor_params']['default_percentiles'],
                 true, // raw
-                false // not historical
+                false, // not historical
+                $step  // actual step for live
             );
    
             // concern-метрики

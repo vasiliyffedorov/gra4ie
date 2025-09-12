@@ -37,6 +37,7 @@ class AnomalyDetector implements AnomalyDetectorInterface {
      * @param array|null $percentileConfig Конфигурация перцентилей для исторических данных (опционально)
      * @param bool $raw Если true, возвращает сырые массивы durations/sizes
      * @param bool $isHistorical Если true, сжимает историю по перцентилям
+     * @param int $actualStep Реальный шаг времени данных (сек)
      * @return array Статистика: ['above' => ['time_outside_percent' => float, 'anomaly_count' => int, 'durations' => array, 'sizes' => array, 'direction' => string], 'below' => [...], 'combined' => ['time_outside_percent' => float, 'anomaly_count' => int]]
      * @throws \InvalidArgumentException Если входные массивы пусты или несоответствуют по размеру
      */
@@ -46,7 +47,8 @@ class AnomalyDetector implements AnomalyDetectorInterface {
         array $lowerBound,
         ?array $percentileConfig = null,
         bool $raw = false,
-        bool $isHistorical = false
+        bool $isHistorical = false,
+        int $actualStep = 60
     ): array {
         if (empty($dataPoints) || empty($upperBound) || empty($lowerBound)) {
             throw new \InvalidArgumentException('Data points, upper and lower bounds must not be empty');
@@ -66,31 +68,29 @@ class AnomalyDetector implements AnomalyDetectorInterface {
             'sizes'                => [],
             'direction'            => ''
         ];
-        return [
-            'above'    => array_merge($zeroStats, ['direction'=>'above']),
-            'below'    => array_merge($zeroStats, ['direction'=>'below']),
-            'combined' => [
-                'time_outside_percent' => 0,
-                'anomaly_count'        => 0
-            ]
+        $above = array_merge($zeroStats, ['direction' => 'above']);
+        $below = array_merge($zeroStats, ['direction' => 'below']);
+        $combined = [
+            'time_outside_percent' => 0,
+            'anomaly_count'        => 0
         ];
 
         // Сортируем все массивы по времени
         usort($dataPoints, fn($a, $b) => $a['time'] <=> $b['time']);
         usort($upperBound, fn($a, $b) => $a['time'] <=> $b['time']);
-        usort($lowerBound, fn($a, $b) => $b['time'] <=> $b['time']);
+        usort($lowerBound, fn($a, $b) => $a['time'] <=> $b['time']);
 
         $totalDuration = ($dataPoints[array_key_last($dataPoints)]['time'] - $dataPoints[0]['time']);
         if ($totalDuration <= 0) $totalDuration = 1; // Избежать деления на 0
 
-        $step = $this->config['corrdor_params']['step'] ?? 60; // Шаг из config
+        $step = $actualStep; // Используем переданный actualStep
 
         // Инициализация для above и below
         $aboveAnomalies = ['points' => [], 'segments' => [], 'total_time' => 0, 'count' => 0];
         $belowAnomalies = ['points' => [], 'segments' => [], 'total_time' => 0, 'count' => 0];
 
         // Align по индексу, предполагая одинаковый step и aligned times
-        $n = count($dataPoints);
+        // Use $n from min(counts) at line 54
         for ($i = 0; $i < $n; $i++) {
             $data = $dataPoints[$i];
             $upper = $upperBound[$i] ?? ['value' => 0];
@@ -111,8 +111,8 @@ class AnomalyDetector implements AnomalyDetectorInterface {
         }
 
         // Группировка сегментов аномалий (consecutive)
-        $above['durations'] = $this->groupAnomalySegments($aboveAnomalies['points']);
-        $below['durations'] = $this->groupAnomalySegments($belowAnomalies['points']);
+        $above['durations'] = $this->groupAnomalySegments($aboveAnomalies['points'], $step);
+        $below['durations'] = $this->groupAnomalySegments($belowAnomalies['points'], $step);
         $above['sizes'] = array_column($aboveAnomalies['points'], 'size');
         $below['sizes'] = array_column($belowAnomalies['points'], 'size');
 
@@ -234,27 +234,35 @@ class AnomalyDetector implements AnomalyDetectorInterface {
         $sizeP = $this->config['corrdor_params']['default_percentiles']['size'] ?? 75;
 
         $durConcern = 0.0;
-        if (!empty($currentStats['durations']) && !empty($historicalStats['durations'])) {
+        if (!empty($currentStats['durations'])) {
             $currMaxDur = max($currentStats['durations']);
-            $durIndex = (int)($durationP / 100 * 11); // for 12 elements
-            $histDur = $historicalStats['durations'][$durIndex] ?? 0;
-            if ($histDur > 0) {
-                $ratio = $currMaxDur / ($histDur * $durationMult);
-                $durConcern = max(0, $ratio - 1);
-            } elseif ($currMaxDur > 0) {
-                $durConcern = 1.0; // if no history, any deviation is concern
+            if (!empty($historicalStats['durations'])) {
+                $durIndex = (int)($durationP / 100 * 11); // for 12 elements
+                $histDur = $historicalStats['durations'][$durIndex] ?? 0;
+                if ($histDur > 0) {
+                    $ratio = $currMaxDur / ($histDur * $durationMult);
+                    $durConcern = max(0, $ratio - 1);
+                } else {
+                    $durConcern = 1.0;
+                }
+            } else {
+                $durConcern = 1.0;
             }
         }
 
         $sizeConcern = 0.0;
-        if (!empty($currentStats['sizes']) && !empty($historicalStats['sizes'])) {
+        if (!empty($currentStats['sizes'])) {
             $currMaxSize = max($currentStats['sizes']);
-            $sizeIndex = (int)($sizeP / 100 * 11);
-            $histSize = $historicalStats['sizes'][$sizeIndex] ?? 0;
-            if ($histSize > 0) {
-                $ratio = $currMaxSize / ($histSize * $sizeMult);
-                $sizeConcern = max(0, $ratio - 1);
-            } elseif ($currMaxSize > 0) {
+            if (!empty($historicalStats['sizes'])) {
+                $sizeIndex = (int)($sizeP / 100 * 11);
+                $histSize = $historicalStats['sizes'][$sizeIndex] ?? 0;
+                if ($histSize > 0) {
+                    $ratio = $currMaxSize / ($histSize * $sizeMult);
+                    $sizeConcern = max(0, $ratio - 1);
+                } else {
+                    $sizeConcern = 1.0;
+                }
+            } else {
                 $sizeConcern = 1.0;
             }
         }
@@ -293,19 +301,18 @@ class AnomalyDetector implements AnomalyDetectorInterface {
     /**
      * Группирует consecutive аномалии в сегменты, возвращает durations в секундах
      */
-    private function groupAnomalySegments(array $anomalyPoints): array
+    private function groupAnomalySegments(array $anomalyPoints, int $actualStep = 60): array
     {
         if (empty($anomalyPoints)) return [];
         usort($anomalyPoints, fn($a, $b) => $a['time'] <=> $b['time']);
         $durations = [];
-        $step = $this->config['corrdor_params']['step'] ?? 60;
         $segmentCount = 1;
         $prevTime = $anomalyPoints[0]['time'];
         for ($i = 1; $i < count($anomalyPoints); $i++) {
             $currTime = $anomalyPoints[$i]['time'];
-            if ($currTime > $prevTime + $step) {
+            if ($currTime > $prevTime + $actualStep) {
                 // Конец сегмента
-                $durations[] = $segmentCount * $step;
+                $durations[] = $segmentCount * $actualStep;
                 $segmentCount = 1;
             } else {
                 $segmentCount++;
@@ -313,7 +320,7 @@ class AnomalyDetector implements AnomalyDetectorInterface {
             $prevTime = $currTime;
         }
         // Последний сегмент
-        $durations[] = $segmentCount * $step;
+        $durations[] = $segmentCount * $actualStep;
         return $durations;
     }
 }

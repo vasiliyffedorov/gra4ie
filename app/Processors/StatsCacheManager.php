@@ -161,7 +161,8 @@ class StatsCacheManager {
             $historyData, $upperSeries, $lowerSeries,
             $currentConfig['corrdor_params']['default_percentiles'],
             false, // raw
-            true // isHistorical
+            true, // isHistorical
+            $longStep // actual step for hist
         );
         $meta['anomaly_stats'] = $stats;
 

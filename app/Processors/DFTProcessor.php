@@ -145,7 +145,7 @@ class DFTProcessor implements DFTProcessorInterface {
      */
     public function restoreFullDFT(array $coefficients, int $start, int $end, int $step, array $meta, ?array $trend = null): array {
         if (empty($coefficients)) {
-            throw new \InvalidArgumentException('Coefficients array cannot be empty');
+            $this->logger->info('Coefficients array is empty in restoreFullDFT, proceeding with trend only');
         }
         if (!isset($meta['dataStart']) || !isset($meta['totalDuration'])) {
             throw new \InvalidArgumentException('Meta must contain dataStart and totalDuration');
