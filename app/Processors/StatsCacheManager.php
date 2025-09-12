@@ -5,6 +5,7 @@ namespace App\Processors;
 
 use App\Interfaces\LoggerInterface;
 use App\Interfaces\CacheManagerInterface;
+use App\Interfaces\GrafanaClientInterface;
 use App\Formatters\ResponseFormatter;
 use App\Interfaces\DataProcessorInterface;
 use App\Interfaces\DFTProcessorInterface;
@@ -18,6 +19,7 @@ class StatsCacheManager {
     private DataProcessorInterface $dataProcessor;
     private DFTProcessorInterface $dftProcessor;
     private AnomalyDetectorInterface $anomalyDetector;
+    private GrafanaClientInterface $client;
 
     public function __construct(
         array $config,
@@ -26,7 +28,8 @@ class StatsCacheManager {
         ResponseFormatter $responseFormatter,
         DataProcessorInterface $dataProcessor,
         DFTProcessorInterface $dftProcessor,
-        AnomalyDetectorInterface $anomalyDetector
+        AnomalyDetectorInterface $anomalyDetector,
+        GrafanaClientInterface $client
     ) {
         $this->config = $config;
         $this->logger = $logger;
@@ -35,6 +38,7 @@ class StatsCacheManager {
         $this->dataProcessor = $dataProcessor;
         $this->dftProcessor = $dftProcessor;
         $this->anomalyDetector = $anomalyDetector;
+        $this->client = $client;
     }
 
     /**
@@ -63,6 +67,33 @@ class StatsCacheManager {
         $longStart = $range['start'];
         $longEnd = $range['end'];
         $longStep = $currentConfig['corrdor_params']['step'];
+
+        // Автоматическое определение scaleCorridor
+        $periodDays = $currentConfig['corrdor_params']['historical_period_days'];
+        $halfPeriodSec = (int)(($periodDays / 2) * 86400);
+        $halfStart = $longEnd - $halfPeriodSec;
+        $halfStep = (int)($longStep / 2);
+        if ($halfStep < 1) {
+            $halfStep = $longStep;
+        }
+        $halfRaw = $this->client->queryRange($query, $halfStart, $longEnd, $halfStep);
+        $halfGrouped = $this->dataProcessor->groupData($halfRaw);
+        $halfData = $halfGrouped[$labelsJson] ?? [];
+        $minPts = $currentConfig['corrdor_params']['min_data_points'];
+        $minHalfPts = (int)($minPts / 2);
+        $scaleCorridor = false;
+        if (count($halfData) >= $minHalfPts) {
+            $mainValues = array_filter(array_column($historyData, 'value'), fn($v) => $v !== null);
+            $mainAvg = count($mainValues) > 0 ? array_sum($mainValues) / count($mainValues) : 0;
+            $halfValues = array_filter(array_column($halfData, 'value'), fn($v) => $v !== null);
+            $halfAvg = count($halfValues) > 0 ? array_sum($halfValues) / count($halfValues) : 0;
+            $ratio = $halfAvg > 0 ? $mainAvg / $halfAvg : 0;
+            $tolerance = 0.2;
+            $scaleCorridor = ($halfAvg > 0 && abs($ratio - 2) <= $tolerance);
+            $this->logger->info("Scale corridor for {$labelsJson}: " . ($scaleCorridor ? 'true' : 'false') . ", ratio: {$ratio}");
+        } else {
+            $this->logger->info("Insufficient half-period data for scale detection on {$labelsJson}");
+        }
 
         $minPts = $currentConfig['corrdor_params']['min_data_points'];
         if (count($historyData) < $minPts) {
@@ -93,6 +124,7 @@ class StatsCacheManager {
             'dft_rebuild_count' => ($cached['meta']['dft_rebuild_count'] ?? 0) + 1,
             'labels'            => json_decode($labelsJson, true),
             'created_at'        => time(),
+            'scaleCorridor'     => $scaleCorridor,
         ];
 
         $upperSeries = $this->dftProcessor->restoreFullDFT(

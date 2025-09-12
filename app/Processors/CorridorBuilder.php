@@ -130,12 +130,13 @@ class CorridorBuilder
                 $cached['meta'], $cached['dft_lower']['trend']
             );
 
-            // масштаб при scaleCorridor=true
+            // автоматическое масштабирование на основе флага метрики
             $factor = $step / $histStep;
-            if (!empty($this->config['scaleCorridor']) && abs($factor-1) > 1e-6) {
+            $scaleCorridor = $cached['meta']['scaleCorridor'] ?? false;
+            if ($scaleCorridor && abs($factor-1) > 1e-6) {
                 foreach ($upper as &$pt) { $pt['value'] *= $factor; }
                 foreach ($lower as &$pt) { $pt['value'] *= $factor; }
-                $this->logger->info("Масштабирование коридора: {$factor}");
+                $this->logger->info("Автоматическое масштабирование коридора для метрики: {$factor}");
             }
 
             // корректируем ширину

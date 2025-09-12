@@ -113,7 +113,8 @@ class Container
             $dataProcessor = $this->get(DataProcessorInterface::class);
             $dftProcessor = $this->get(DFTProcessorInterface::class);
             $anomalyDetector = $this->get(AnomalyDetectorInterface::class);
-            return new \App\Processors\StatsCacheManager($config, $logger, $cacheManager, $responseFormatter, $dataProcessor, $dftProcessor, $anomalyDetector);
+            $client = $this->get(GrafanaClientInterface::class);
+            return new \App\Processors\StatsCacheManager($config, $logger, $cacheManager, $responseFormatter, $dataProcessor, $dftProcessor, $anomalyDetector, $client);
         };
         // PSR-16 Cache Adapter
         $this->services[SimpleCacheInterface::class] = function () {
