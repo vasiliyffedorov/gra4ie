@@ -210,6 +210,9 @@ class CorridorBuilder
         }
 
         PerformanceMonitor::end('total_processing');
+        if (empty($results)) {
+            $this->logger->warning("Empty results for query '$query' (fetch error or no metrics), attempting to format empty/nodata response");
+        }
         return $this->responseFormatter->formatForGrafana($results, $query, $showMetrics);
     }
 }

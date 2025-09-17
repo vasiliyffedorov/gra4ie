@@ -151,8 +151,11 @@ if ($method==='GET' && $path==='/api/v1/metadata') {
     $metadata = [];
     foreach ($metrics as $metric) {
         $metadata[$metric] = [
-            'type' => 'gauge',
-            'help' => "Metric from Grafana dashboard panel: $metric"
+            [
+                'type' => 'gauge',
+                'help' => "Metric from Grafana dashboard panel: $metric",
+                'unit' => ''
+            ]
         ];
     }
     jsonSuccess($metadata);

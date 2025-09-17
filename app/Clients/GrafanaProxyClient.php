@@ -141,7 +141,11 @@ class GrafanaProxyClient implements GrafanaClientInterface
             return [];
         }
 
-        return $this->parseFrames(json_decode($resp, true), $info);
+        $parsed = $this->parseFrames(json_decode($resp, true), $info);
+        if (empty($parsed)) {
+            $this->logger->warning("Parsed DS query result is empty for $metricName (possible no data or parse error)");
+        }
+        return $parsed;
     }
 
     /**
@@ -234,26 +238,46 @@ class GrafanaProxyClient implements GrafanaClientInterface
      */
     private function httpRequest(string $method, string $url, ?string $body = null): ?string
     {
-        $this->logger->info("Grafana HTTP Request → $method $url\nBody: " . ($body ?? 'none'));
-        $ch = curl_init($url);
-        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, $this->headers);
-        if ($body !== null) {
-            curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
-        }
-        $resp = curl_exec($ch);
-        $err  = curl_error($ch);
-        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
+        $maxRetries = 2; // Retry up to 2 times for transient errors
+        $retryCount = 0;
 
-        if ($err || $code >= 400) {
-            $this->logger->error("Grafana HTTP Error → $method $url\nCode: $code, Error: " . ($err ?: 'HTTP status >= 400'));
-            return null;
+        while ($retryCount <= $maxRetries) {
+            $this->logger->info("Grafana HTTP Request → $method $url (attempt " . ($retryCount + 1) . ")\nBody: " . ($body ?? 'none'));
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, $this->headers);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10); // Add 10s timeout
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5); // Add connect timeout
+            if ($body !== null) {
+                curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+            }
+            $resp = curl_exec($ch);
+            $err  = curl_error($ch);
+            $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if (!$err && $code < 400) {
+                $this->logger->info("Grafana HTTP Response ← Code: $code\nBody (truncated): " . substr($resp ?? '', 0, 1000));
+                return $resp;
+            }
+
+            $errorDetails = $err ?: "HTTP status $code";
+            if ($code >= 400 && $resp) {
+                $errorDetails .= ", Body: " . substr($resp, 0, 500);
+            }
+            $this->logger->error("Grafana HTTP Error → $method $url (attempt " . ($retryCount + 1) . ")\nCode: $code, Error: $errorDetails");
+
+            $retryCount++;
+            if ($retryCount <= $maxRetries && ($err || in_array($code, [500, 502, 503, 504]))) { // Retry on curl err or 5xx
+                $this->logger->info("Retrying request after " . ($retryCount - 1) . " failure(s)...");
+                sleep(1 * $retryCount); // Exponential backoff: 1s, 2s
+            } else {
+                return null;
+            }
         }
 
-        $this->logger->info("Grafana HTTP Response ← Code: $code\nBody (truncated): " . substr($resp ?? '', 0, 1000));
-        return $resp;
+        return null;
     }
 
     /**

@@ -62,8 +62,8 @@ class StatsCacheManager {
         array $historyData,
         array $currentConfig
     ): array {
-        if (empty($query) || empty($labelsJson) || empty($historyData)) {
-            throw new \InvalidArgumentException('Query, labelsJson and historyData must not be empty');
+        if (empty($query) || empty($labelsJson)) {
+            throw new \InvalidArgumentException('Query and labelsJson must not be empty');
         }
         if (!isset($currentConfig['corrdor_params']['step']) || !isset($currentConfig['corrdor_params']['min_data_points'])) {
             throw new \InvalidArgumentException('Config must contain corrdor_params.step and min_data_points');

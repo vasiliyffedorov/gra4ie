@@ -71,8 +71,24 @@ class ResponseFormatter {
      * @throws \RuntimeException Если конфигурация метрик некорректна
      */
     public function formatForGrafana(array $results, string $query, string|array|null $filter = null): array {
-        if (empty($results) || empty($query)) {
-            throw new \RuntimeException('Results and query must not be empty');
+        if (empty($query)) {
+            $this->logger->error("Empty query provided to formatForGrafana");
+            return ['status' => 'error', 'data' => ['message' => 'Invalid query']];
+        }
+        if (empty($results)) {
+            $this->logger->warning("Empty results for query '$query', returning empty matrix with nodata");
+            return [
+                'status' => 'success',
+                'data' => [
+                    'resultType' => 'matrix',
+                    'result' => [
+                        [
+                            'metric' => ['__name__' => 'nodata', 'original_query' => $query],
+                            'values' => [[time(), '1']] // Flag nodata
+                        ]
+                    ]
+                ]
+            ];
         }
         $formatted = [
             'status' => 'success',
