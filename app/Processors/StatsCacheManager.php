@@ -113,15 +113,14 @@ class StatsCacheManager {
                     $currentConfig['corrdor_params']['historical_period_days'] = $optimal;
                     $this->logger->info("Автотюн использован для {$labelsJson}: период {$optimal} дней");
 
-                    // Перезагрузить historyData на новый период
+                    // Подрезать historyData на новый период (удалить recent tail, оставить early head)
                     $fullPeriodSec = (int)($optimal * 86400);
                     $longEndNew = $originalLongEnd;
-                    $longStartNew = $longEndNew - $fullPeriodSec;
-                    $historyRaw = $this->client->queryRange($query, $longStartNew, $longEndNew, $longStep);
-                    $historyGrouped = $this->dataProcessor->groupData($historyRaw);
-                    $historyData = $historyGrouped[$labelsJson] ?? [];
+                    $cutStart = $longEndNew - $fullPeriodSec;
+                    $historyData = array_filter($originalHistoryData, fn($point) => $point['time'] >= $cutStart);
+                    usort($historyData, fn($a, $b) => $a['time'] <=> $b['time']);
                     if (count($historyData) < $minPts) {
-                        $this->logger->warning("Недостаточно данных после автотюна, fallback на оригинал");
+                        $this->logger->warning("Недостаточно данных после автотюна подрезки, fallback на оригинал");
                         $historyData = $originalHistoryData;
                         $longStart = $originalLongStart;
                         $longEnd = $originalLongEnd;
@@ -130,6 +129,7 @@ class StatsCacheManager {
                         $range = $this->dataProcessor->getActualDataRange($historyData);
                         $longStart = $range['start'];
                         $longEnd = $range['end'];
+                        $this->logger->info("Автотюн подрезка для {$labelsJson}: период {$optimal} дней, точек с " . count($originalHistoryData) . " до " . count($historyData));
                     }
                 }
             } catch (\InvalidArgumentException $e) {
