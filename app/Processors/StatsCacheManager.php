@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace App\Processors;
 
+use App\Processors\AutoTunePeriodCalculator;
+
 use App\Interfaces\LoggerInterface;
 use App\Interfaces\CacheManagerInterface;
 use App\Interfaces\GrafanaClientInterface;
@@ -20,6 +22,7 @@ class StatsCacheManager {
     private DFTProcessorInterface $dftProcessor;
     private AnomalyDetectorInterface $anomalyDetector;
     private GrafanaClientInterface $client;
+    private AutoTunePeriodCalculator $autoTune;
 
     public function __construct(
         array $config,
@@ -29,7 +32,8 @@ class StatsCacheManager {
         DataProcessorInterface $dataProcessor,
         DFTProcessorInterface $dftProcessor,
         AnomalyDetectorInterface $anomalyDetector,
-        GrafanaClientInterface $client
+        GrafanaClientInterface $client,
+        AutoTunePeriodCalculator $autoTune
     ) {
         if (!isset($config['corrdor_params']['step']) || !isset($config['cache'])) {
             throw new \InvalidArgumentException('Config must contain corrdor_params.step and cache');
@@ -42,6 +46,7 @@ class StatsCacheManager {
         $this->dftProcessor = $dftProcessor;
         $this->anomalyDetector = $anomalyDetector;
         $this->client = $client;
+        $this->autoTune = $autoTune;
     }
 
     /**
@@ -86,7 +91,53 @@ class StatsCacheManager {
         $longEnd = $range['end'];
         $longStep = $currentConfig['corrdor_params']['step'];
 
-        // Автоматическое определение scaleCorridor
+        $minPts = $currentConfig['corrdor_params']['min_data_points'];
+        if (count($historyData) < $minPts) {
+            $this->logger->warning("Недостаточно долгосрочных данных, placeholder");
+            return $this->buildPlaceholder($query, $labelsJson, $longStart, $longEnd, $longStep);
+        }
+
+        // Автотюн периода, если достаточно данных
+        $autotuned = false;
+        $originalHistoryData = $historyData;
+        $originalLongStart = $longStart;
+        $originalLongEnd = $longEnd;
+        if (count($historyData) >= 100) {
+            $historicalAssoc = [];
+            foreach ($historyData as $point) {
+                $historicalAssoc[(int)$point['time']] = (float)$point['value'];
+            }
+            try {
+                $optimal = $this->autoTune->calculateOptimalPeriod($historicalAssoc);
+                if ($optimal != $currentConfig['corrdor_params']['historical_period_days']) {
+                    $currentConfig['corrdor_params']['historical_period_days'] = $optimal;
+                    $this->logger->info("Автотюн использован для {$labelsJson}: период {$optimal} дней");
+
+                    // Перезагрузить historyData на новый период
+                    $fullPeriodSec = (int)($optimal * 86400);
+                    $longEndNew = $originalLongEnd;
+                    $longStartNew = $longEndNew - $fullPeriodSec;
+                    $historyRaw = $this->client->queryRange($query, $longStartNew, $longEndNew, $longStep);
+                    $historyGrouped = $this->dataProcessor->groupData($historyRaw);
+                    $historyData = $historyGrouped[$labelsJson] ?? [];
+                    if (count($historyData) < $minPts) {
+                        $this->logger->warning("Недостаточно данных после автотюна, fallback на оригинал");
+                        $historyData = $originalHistoryData;
+                        $longStart = $originalLongStart;
+                        $longEnd = $originalLongEnd;
+                    } else {
+                        $autotuned = true;
+                        $range = $this->dataProcessor->getActualDataRange($historyData);
+                        $longStart = $range['start'];
+                        $longEnd = $range['end'];
+                    }
+                }
+            } catch (\InvalidArgumentException $e) {
+                $this->logger->warning("Автотюн не удался для {$labelsJson}: " . $e->getMessage());
+            }
+        }
+
+        // Автоматическое определение scaleCorridor на обновлённом диапазоне
         $periodDays = $currentConfig['corrdor_params']['historical_period_days'];
         $halfPeriodSec = (int)(($periodDays / 2) * 86400);
         $halfStart = $longEnd - $halfPeriodSec;
@@ -97,7 +148,6 @@ class StatsCacheManager {
         $halfRaw = $this->client->queryRange($query, $halfStart, $longEnd, $halfStep);
         $halfGrouped = $this->dataProcessor->groupData($halfRaw);
         $halfData = $halfGrouped[$labelsJson] ?? [];
-        $minPts = $currentConfig['corrdor_params']['min_data_points'];
         $minHalfPts = (int)($minPts / 2);
         $scaleCorridor = false;
         if (count($halfData) >= $minHalfPts) {
@@ -111,12 +161,6 @@ class StatsCacheManager {
             $this->logger->info("Scale corridor for {$labelsJson}: " . ($scaleCorridor ? 'true' : 'false') . ", ratio: {$ratio}");
         } else {
             $this->logger->info("Insufficient half-period data for scale detection on {$labelsJson}");
-        }
-
-        $minPts = $currentConfig['corrdor_params']['min_data_points'];
-        if (count($historyData) < $minPts) {
-            $this->logger->warning("Недостаточно долгосрочных данных, placeholder");
-            return $this->buildPlaceholder($query, $labelsJson, $longStart, $longEnd, $longStep);
         }
 
         // Генерируем DFT
