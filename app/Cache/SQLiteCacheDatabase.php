@@ -100,12 +100,12 @@ class SQLiteCacheDatabase
             }
         }
         if (!$hasCustomParams) {
-            $this->logger->warn("Добавление столбца custom_params в таблицу queries.");
+            $this->logger->warning("Добавление столбца custom_params в таблицу queries.");
             $this->db->exec("ALTER TABLE queries ADD COLUMN custom_params TEXT");
             $this->logger->info("Столбец custom_params добавлен в таблицу queries.");
         }
         if (!$hasConfigHash) {
-            $this->logger->warn("Добавление столбца config_hash в таблицу queries.");
+            $this->logger->warning("Добавление столбца config_hash в таблицу queries.");
             $this->db->exec("ALTER TABLE queries ADD COLUMN config_hash TEXT");
             $this->logger->info("Столбец config_hash добавлен в таблицу queries.");
         }
@@ -123,12 +123,12 @@ class SQLiteCacheDatabase
             }
         }
         if (!$hasUpperTrend) {
-            $this->logger->warn("Добавление столбца upper_trend_json в таблицу dft_cache.");
+            $this->logger->warning("Добавление столбца upper_trend_json в таблицу dft_cache.");
             $this->db->exec("ALTER TABLE dft_cache ADD COLUMN upper_trend_json TEXT");
             $this->logger->info("Столбец upper_trend_json добавлен в таблицу dft_cache.");
         }
         if (!$hasLowerTrend) {
-            $this->logger->warn("Добавление столбца lower_trend_json в таблицу dft_cache.");
+            $this->logger->warning("Добавление столбца lower_trend_json в таблицу dft_cache.");
             $this->db->exec("ALTER TABLE dft_cache ADD COLUMN lower_trend_json TEXT");
             $this->logger->info("Столбец lower_trend_json добавлен в таблицу dft_cache.");
         }
@@ -136,7 +136,7 @@ class SQLiteCacheDatabase
         // Migrate for grafana_metrics table
         $tableExists = $this->db->query(\sprintf("SELECT name FROM sqlite_master WHERE type='table' AND name='grafana_metrics'"))->fetchColumn();
         if (!$tableExists) {
-            $this->logger->warn("Создание таблицы grafana_metrics.");
+            $this->logger->warning("Создание таблицы grafana_metrics.");
             $this->db->exec("
                 CREATE TABLE grafana_metrics (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,

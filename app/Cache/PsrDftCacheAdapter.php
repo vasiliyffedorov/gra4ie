@@ -69,7 +69,7 @@ class PsrDftCacheAdapter implements SimpleCacheInterface
             $parsed = $this->parseKey($key);
             // Для удаления используем прямой доступ к БД через cacheManager, но поскольку нет delete, симулируем через shouldRecreateCache = true или просто возвращаем false
             // Альтернатива: добавить метод delete в CacheManagerInterface позже, но пока отметим как не реализован полностью
-            $this->logger->warn("Удаление DFT кэша не полностью поддерживается в адаптере для ключа: $key");
+            $this->logger->warning("Удаление DFT кэша не полностью поддерживается в адаптере для ключа: $key");
             return $this->cacheManager->checkCacheExists($parsed['query'], $parsed['labelsJson']);
             // TODO: Реализовать реальное удаление через SQL в будущем
         } catch (InvalidArgumentException $e) {

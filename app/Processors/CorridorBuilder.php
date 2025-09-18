@@ -124,6 +124,9 @@ class CorridorBuilder
                 );
             }
 
+            $stddev = $cached['meta']['orig_stddev'] ?? 0.0;
+            $this->logger->debug("Извлечен stddev из кэша для {$labelsJson}: $stddev");
+
 
             // ресторим DFT
             $upper = $this->dftProcessor->restoreFullDFT(
@@ -144,7 +147,8 @@ class CorridorBuilder
                 $cached['dft_lower']['coefficients'][0]['amplitude'] ?? 0,
                 $this->config, $this->logger,
                 $cached['dft_upper']['trend'],
-                $cached['dft_lower']['trend']
+                $cached['dft_lower']['trend'],
+                $stddev
             );
 
             // аномалии

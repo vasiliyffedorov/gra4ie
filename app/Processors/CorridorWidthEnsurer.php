@@ -15,13 +15,23 @@ class CorridorWidthEnsurer
         array $config,
         Logger $logger,
         ?array $upperTrend = null,
-        ?array $lowerTrend = null
+        ?array $lowerTrend = null,
+        float $stddev = 0.0
     ): array {
         $minWidthFactor = $config['corrdor_params']['min_corridor_width_factor'] ?? 0.1;
-        $minWidth = $minWidthFactor * abs($upperZeroAmp - $lowerZeroAmp);
+        $zeroDiff = abs($upperZeroAmp - $lowerZeroAmp);
+        $minWidth = $minWidthFactor * $zeroDiff;
+
+        $stddevFactor = $config['corrdor_params']['min_corridor_stddev_factor'] ?? 0.5;
+        $stddevMin = $stddevFactor * $stddev;
+        $minWidth = max($minWidth, $stddevMin);
+
+        $logger->debug("Calculated minWidth: $minWidth (zero_diff: $zeroDiff, stddev_min: $stddevMin, stddev: $stddev)");
 
         if ($minWidth <= 0) {
-            $minWidth = $minWidthFactor * max(abs($upperZeroAmp), abs($lowerZeroAmp), 1);
+            $fallback = $minWidthFactor * max(abs($upperZeroAmp), abs($lowerZeroAmp), 1);
+            $minWidth = max($fallback, $stddevMin);
+            $logger->debug("Fallback minWidth applied: $minWidth");
         }
 
         $correctedUpper = $upper;

@@ -92,6 +92,8 @@ php -S 0.0.0.0:9093
 - **Кэш**: `app/Cache/SQLiteCacheManager.php` — управление кэшем на SQLite. Поддержка PSR-16 через адаптер `PsrDftCacheAdapter.php`.
 - **Утилиты**: `Logger.php` — логирование, `PerformanceMonitor.php` — мониторинг.
 
+- `AutoTunePeriodCalculator.php` — класс для автоматической настройки параметра `historical_period_days` на основе DFT-анализа исторических данных метрики. Использует интерполяцию, детренд и поиск доминирующего периода для оптимизации длины исторического периода. Интерфейс: `calculateOptimalPeriod(array $data): float`, где $data - timestamp => value.
+
 Приложение использует интерфейсы для абстракции (например, `LoggerInterface.php`, `CacheManagerInterface.php`).
 
 ## Интеграция PSR-16 для кэша
@@ -130,3 +132,12 @@ $dftData = $psrCache->get($key);
 ## Лицензия
 
 MIT License (или укажите актуальную, если есть).
+
+
+## Изменения в логгере (2025-09-18)
+
+- Исправлена ошибка: Все вызовы несуществующего метода `Logger::warn()` заменены на `Logger::warning()` для соответствия PSR-3 стандарту.
+- Затронутые файлы: DataProcessor.php (2 места), LinearTrendCalculator.php (2), StatsCalculator.php (1), SQLiteCacheDatabase.php (5), DFTProcessor.php (2), PsrDftCacheAdapter.php (1).
+- В StatsCalculator.php добавлена информация о файле и строке в сообщение для сохранения контекста.
+
+Это устраняет PHP Fatal error в DataProcessor.php:40 и связанных цепочках вызовов.

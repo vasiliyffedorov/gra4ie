@@ -37,7 +37,7 @@ class DataProcessor implements DataProcessorInterface {
 
     public function getActualDataRange(array $data, ?int $defaultStart = null, ?int $defaultEnd = null): array {
         if (empty($data)) {
-            $this->logger->warn("Пустые данные для определения диапазона");
+            $this->logger->warning("Пустые данные для определения диапазона");
             return [
                 'start' => $defaultStart ?? time() - 86400,
                 'end' => $defaultEnd ?? time()
@@ -56,7 +56,7 @@ class DataProcessor implements DataProcessorInterface {
 
     public function calculateBounds(array $data, int $start, int $end, int $step): array {
         if (empty($data)) {
-            $this->logger->warn("Пустые данные для расчета границ");
+            $this->logger->warning("Пустые данные для расчета границ");
             return ['upper' => [], 'lower' => []];
         }
 

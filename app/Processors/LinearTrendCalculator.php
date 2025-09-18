@@ -19,7 +19,7 @@ class LinearTrendCalculator implements TrendCalculatorInterface
     {
         $n = count($values);
         if ($n < 2) {
-            $this->logger->warn("Недостаточно данных для вычисления тренда: $n точек");
+            $this->logger->warning("Недостаточно данных для вычисления тренда: $n точек");
             return ['slope' => 0, 'intercept' => $values[0] ?? 0];
         }
 
@@ -38,7 +38,7 @@ class LinearTrendCalculator implements TrendCalculatorInterface
         $denominator = $sumXX - $n * $meanX * $meanX;
 
         if (abs($denominator) < 1e-10) {
-            $this->logger->warn("Нулевой или почти нулевой знаменатель при вычислении тренда");
+            $this->logger->warning("Нулевой или почти нулевой знаменатель при вычислении тренда");
             return ['slope' => 0, 'intercept' => $meanY];
         }
 

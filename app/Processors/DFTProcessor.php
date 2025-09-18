@@ -86,7 +86,7 @@ class DFTProcessor implements DFTProcessorInterface {
     private function calculateLinearTrend(array $values, array $times): array {
         $n = count($values);
         if ($n < 2) {
-            $this->logger->warn("Недостаточно данных для вычисления тренда: $n точек");
+            $this->logger->warning("Недостаточно данных для вычисления тренда: $n точек");
             return ['slope' => 0, 'intercept' => $values[0] ?? 0];
         }
 
@@ -107,7 +107,7 @@ class DFTProcessor implements DFTProcessorInterface {
             $denominator = $sumXX - $n * $meanX * $meanX;
 
             if (abs($denominator) < 1e-10) {
-                $this->logger->warn("Нулевой или почти нулевой знаменатель при вычислении тренда");
+                $this->logger->warning("Нулевой или почти нулевой знаменатель при вычислении тренда");
                 return ['slope' => 0, 'intercept' => $meanY];
             }
 

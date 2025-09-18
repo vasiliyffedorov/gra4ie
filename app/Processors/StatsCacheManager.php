@@ -123,6 +123,16 @@ class StatsCacheManager {
         $bounds = $this->dataProcessor->calculateBounds($historyData, $longStart, $longEnd, $longStep);
         $dftResult = $this->dftProcessor->generateDFT($bounds, $longStart, $longEnd, $longStep);
 
+        // Рассчитываем stddev для original historyData
+        $values = array_column($historyData, 'value');
+        $stddev = 0.0;
+        if (!empty($values)) {
+            $mean = array_sum($values) / count($values);
+            $variance = array_sum(array_map(fn($v) => pow($v - $mean, 2), $values)) / count($values);
+            $stddev = sqrt($variance);
+            $this->logger->debug("Stddev для historyData: $stddev");
+        }
+
         // Фильтруем «нулевые» гармоники
         $dftResult['upper']['coefficients'] = array_filter(
             $dftResult['upper']['coefficients'],
@@ -143,6 +153,7 @@ class StatsCacheManager {
             'labels'            => json_decode($labelsJson, true),
             'created_at'        => time(),
             'scaleCorridor'     => $scaleCorridor,
+            'orig_stddev'       => $stddev,
         ];
 
         $upperSeries = $this->dftProcessor->restoreFullDFT(

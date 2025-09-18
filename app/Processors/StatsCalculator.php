@@ -107,7 +107,7 @@ class StatsCalculator
 
         $minPts = $this->config['corrdor_params']['min_data_points'];
         if (count($historyData) < $minPts) {
-            $this->logger->warn("Недостаточно долгосрочных данных, placeholder", __FILE__, __LINE__);
+            $this->logger->warning("Недостаточно долгосрочных данных, placeholder в " . basename(__FILE__) . ":" . __LINE__);
             return $this->buildPlaceholder($query, $labelsJson, $longStart, $longEnd, $longStep);
         }
 
