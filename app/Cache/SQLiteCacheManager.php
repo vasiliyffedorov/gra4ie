@@ -109,5 +109,49 @@ class SQLiteCacheManager implements CacheManagerInterface
     {
         return $this->grafanaMetricsCache->loadMetrics();
     }
+
+    public function loadMaxPeriod(string $metricKey): ?float
+    {
+        try {
+            $db = $this->dbManager->getDb();
+            $stmt = $db->prepare("SELECT max_period_days FROM metrics_max_periods WHERE metric_key = :metric_key");
+            $stmt->execute([':metric_key' => $metricKey]);
+            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+            return $row ? (float)$row['max_period_days'] : null;
+        } catch (\PDOException $e) {
+            $this->logger->error("Ошибка загрузки max_period для $metricKey: " . $e->getMessage());
+            return null;
+        }
+    }
+
+    public function saveMaxPeriod(string $metricKey, float $maxPeriodDays, string $datasourceType = ''): bool
+    {
+        try {
+            $db = $this->dbManager->getDb();
+            $stmt = $db->prepare("INSERT OR REPLACE INTO metrics_max_periods (metric_key, max_period_days, datasource_type, last_updated) VALUES (:metric_key, :max_period_days, :datasource_type, CURRENT_TIMESTAMP)");
+            $result = $stmt->execute([
+                ':metric_key' => $metricKey,
+                ':max_period_days' => $maxPeriodDays,
+                ':datasource_type' => $datasourceType
+            ]);
+            $this->logger->info("Сохранен max_period $maxPeriodDays дней для $metricKey (datasource: $datasourceType)");
+            return $result;
+        } catch (\PDOException $e) {
+            $this->logger->error("Ошибка сохранения max_period для $metricKey: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function cleanupLevel2(int $ttl): void
+    {
+        try {
+            $db = $this->dbManager->getDb();
+            $stmt = $db->prepare("DELETE FROM dft_cache WHERE last_accessed < datetime('now', '-{$ttl} seconds')");
+            $deleted = $stmt->execute();
+            $this->logger->info("Очищено {$deleted} записей из уровня 2 кэша (TTL $ttl sec)");
+        } catch (\PDOException $e) {
+            $this->logger->error("Ошибка очистки уровня 2 кэша: " . $e->getMessage());
+        }
+    }
 }
 ?>

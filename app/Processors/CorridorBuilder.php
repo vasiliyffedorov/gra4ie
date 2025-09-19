@@ -85,26 +85,8 @@ class CorridorBuilder
             $this->logger->warning("No live data from Grafana for query $query");
         }
 
-        // 2) исторические данные
-        $histStep = $step;
-        $offset   = $this->config['corrdor_params']['historical_offset_days'];
-        $period   = $this->config['corrdor_params']['historical_period_days'];
-        $histEnd  = (int)(time() - $offset * 86400);
-        $histStart= (int)($histEnd - $period * 86400);
-
-        PerformanceMonitor::start('long_term_fetch');
-        $longRaw = $this->client->queryRange($query, $histStart, $histEnd, $histStep);
-        PerformanceMonitor::end('long_term_fetch');
-
-        $longGrouped = $this->dataProcessor->groupData($longRaw);
-
-        if (empty($grouped) && !empty($longGrouped)) {
-            $grouped = [];
-            foreach ($longGrouped as $labelsJson => $hist) {
-                $grouped[$labelsJson] = []; // empty original for nodata
-            }
-            $this->logger->info("Filled grouped with empty originals from historical labels for nodata query: $query");
-        }
+        // Historical data fetch is now handled inside recalculateStats with adaptive period
+        $longGrouped = []; // Empty, to trigger fetch in recalculateStats
 
         // 3) по каждой группе
         foreach ($grouped as $labelsJson => $orig) {
@@ -120,7 +102,7 @@ class CorridorBuilder
 
             if ($needRecalc) {
                 $cached = $this->statsCacheManager->recalculateStats(
-                    $query, $labelsJson, $orig, $longGrouped[$labelsJson] ?? [], $this->config
+                    $query, $labelsJson, $orig, [], $this->config
                 );
             }
 

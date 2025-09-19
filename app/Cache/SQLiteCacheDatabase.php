@@ -71,6 +71,17 @@ class SQLiteCacheDatabase
             )
         ");
         $this->db->exec("
+            CREATE TABLE IF NOT EXISTS metrics_max_periods (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                metric_key TEXT UNIQUE NOT NULL,
+                max_period_days FLOAT NOT NULL,
+                datasource_type TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ");
+        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_max_periods_key ON metrics_max_periods(metric_key)");
+        $this->db->exec("
             CREATE TABLE IF NOT EXISTS grafana_metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 metrics_key TEXT UNIQUE NOT NULL DEFAULT 'global_metrics',
@@ -148,6 +159,24 @@ class SQLiteCacheDatabase
             ");
             $this->db->exec("INSERT INTO grafana_metrics (metrics_key, metrics_json) VALUES ('global_metrics', '{}')");
             $this->logger->info("Таблица grafana_metrics создана и инициализирована.");
+        }
+
+        // Migrate for metrics_max_periods table
+        $tableExists = $this->db->query(\sprintf("SELECT name FROM sqlite_master WHERE type='table' AND name='metrics_max_periods'"))->fetchColumn();
+        if (!$tableExists) {
+            $this->logger->warning("Создание таблицы metrics_max_periods.");
+            $this->db->exec("
+                CREATE TABLE metrics_max_periods (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    metric_key TEXT UNIQUE NOT NULL,
+                    max_period_days FLOAT NOT NULL,
+                    datasource_type TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ");
+            $this->db->exec("CREATE INDEX IF NOT EXISTS idx_max_periods_key ON metrics_max_periods(metric_key)");
+            $this->logger->info("Таблица metrics_max_periods создана.");
         }
     }
 }
