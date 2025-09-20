@@ -122,6 +122,29 @@ class CorridorBuilder
                 $cached['meta'], $cached['dft_lower']['trend']
             );
 
+            // применяем автоскейл (масштабирование коридора) если он включён детектором
+            // масштабируем значения коридора пропорционально отношению шага борды к историческому шагу из кэша
+            $histStep = (int)($cached['meta']['step'] ?? $step);
+            $needScale = (bool)($cached['meta']['scaleCorridor'] ?? false);
+            if ($needScale && $histStep > 0 && $step > 0 && $histStep !== $step) {
+                $factor = $step / $histStep;
+                foreach ($upper as &$p) {
+                    if (isset($p['value'])) {
+                        $p['value'] = (float)$p['value'] * $factor;
+                    }
+                }
+                unset($p);
+                foreach ($lower as &$p) {
+                    if (isset($p['value'])) {
+                        $p['value'] = (float)$p['value'] * $factor;
+                    }
+                }
+                unset($p);
+                $this->logger->info(
+                    "Applied autoscale to corridor: factor={$factor} (board_step={$step}, hist_step={$histStep}) for labels={$labelsJson}"
+                );
+            }
+
             // корректируем ширину
             list($cU,$cL) = CorridorWidthEnsurer::ensureWidth(
                 $upper, $lower,

@@ -172,32 +172,99 @@ class StatsCacheManager {
             }
         }
 
-        // Автоматическое определение scaleCorridor на обновлённом диапазоне
-        $periodDays = $currentConfig['corrdor_params']['historical_period_days'];
-        $halfPeriodSec = (int)(($periodDays / 2) * 86400);
-        $halfStart = $longEnd - $halfPeriodSec;
-        $halfStep = (int)($longStep / 2);
-        if ($halfStep < 1) {
-            $halfStep = $longStep;
-        }
-        $halfRaw = $this->client->queryRange($query, $halfStart, $longEnd, $halfStep);
-        $halfGrouped = $this->dataProcessor->groupData($halfRaw);
-        $halfData = $halfGrouped[$labelsJson] ?? [];
-        $minHalfPts = (int)($minPts / 2);
-        $scaleCorridor = false;
-        if (count($halfData) >= $minHalfPts) {
-            $mainValues = array_filter(array_column($historyData, 'value'), fn($v) => $v !== null);
-            $mainAvg = count($mainValues) > 0 ? array_sum($mainValues) / count($mainValues) : 0;
-            $halfValues = array_filter(array_column($halfData, 'value'), fn($v) => $v !== null);
-            $halfAvg = count($halfValues) > 0 ? array_sum($halfValues) / count($halfValues) : 0;
-            $ratio = $halfAvg > 0 ? $mainAvg / $halfAvg : 0;
-            $tolerance = 0.2;
-            $scaleCorridor = ($halfAvg > 0 && abs($ratio - 2) <= $tolerance);
-            $this->logger->info("Scale corridor for {$labelsJson}: " . ($scaleCorridor ? 'true' : 'false') . ", ratio: {$ratio}");
-        } else {
-            $this->logger->info("Insufficient half-period data for scale detection on {$labelsJson}");
-        }
+        // Автоматическое определение необходимости масштабирования (обобщённый алгоритм по последним 100 ненулевым точкам)
+        // 1) Берём последние 100 ненулевых/не-NaN точек из historyData на шаге S = $longStep
+        $k = 8; // коэффициент масштабирования шага: проверяем S/k
+        $S = max(1, (int)$longStep); // сек
+        $Sdiv = max(1, (int)floor($S / $k)); // шаг S/k в секундах, минимум 1
+        
+        // отфильтруем валидные ненулевые точки
+        $nonZero = array_values(array_filter($historyData, function ($p) {
+            if (!isset($p['value'])) return false;
+            $v = (float)$p['value'];
+            return is_finite($v) && $v != 0.0;
+        }));
+        // отсортируем по времени (на всякий случай)
+        usort($nonZero, fn($a, $b) => ($a['time'] <=> $b['time']));
+        // последние 100 ненулевых
+        $tail = array_slice($nonZero, -100);
+        $countS = count($tail);
+        $avgS100 = $countS > 0 ? (array_sum(array_column($tail, 'value')) / $countS) : 0.0;
+        $minTs = $countS > 0 ? min(array_column($tail, 'time')) : null;
 
+        // по умолчанию — скейла нет
+        $scaleCorridor = false;
+
+        if ($countS === 0 || $avgS100 <= 0.0 || $minTs === null) {
+            $this->logger->info("Autoscale(k={$k}) insufficient S data for {$labelsJson}: countS={$countS}, avgS100={$avgS100}");
+        } else {
+            // 2) Выравниваем границы для окна проверки и запрашиваем ряд на шаге S/k
+            // from_aligned = ceil(min_ts / S) * S; to_aligned = $longEnd (он уже привязан к текущему диапазону)
+            $fromAligned = (int)(ceil($minTs / $S) * $S);
+            $toAligned = (int)$longEnd;
+            if ($fromAligned >= $toAligned) {
+                // если окно выродилось — отступим на один S назад
+                $fromAligned = max($longStart, $toAligned - $S);
+            }
+
+            // запрос с шагом S/k
+            $rawDiv = $this->client->queryRange($query, $fromAligned, $toAligned, $Sdiv);
+            $grpDiv = $this->dataProcessor->groupData($rawDiv);
+            $dataDiv = $grpDiv[$labelsJson] ?? [];
+
+            // для S/k исключаем только null/NaN; нули допускаются для delta-метрик
+            $validDiv = array_values(array_filter($dataDiv, function ($p) {
+                if (!isset($p['value'])) return false;
+                $v = (float)$p['value'];
+                return is_finite($v);
+            }));
+            $countSdiv = count($validDiv);
+            $avgSdiv = $countSdiv > 0 ? (array_sum(array_column($validDiv, 'value')) / $countSdiv) : 0.0;
+
+            if ($avgSdiv > 0.0) {
+                // 3) Сравнение: factor = avg(S/k) / avg(S_100)
+                $factor = $avgSdiv / $avgS100;
+
+                // Цели: rate-поведение ~1.0, delta-поведение ~1/k
+                $targetRate  = 1.0;
+                $targetDelta = 1.0 / $k;
+                $relTol = 0.2; // 20% относительная толерантность
+                $isClose = function (float $x, float $target, float $tol): bool {
+                    return abs($x - $target) <= $tol * max($target, 1e-12);
+                };
+
+                $decisionReason = 'undetermined';
+                if ($isClose($factor, $targetRate, $relTol)) {
+                    // rate-like — масштабирование не требуется
+                    $scaleCorridor = false;
+                    $decisionReason = 'factor≈1 (rate-like)';
+                } elseif ($isClose($factor, $targetDelta, $relTol)) {
+                    // delta-like — масштабирование требуется
+                    $scaleCorridor = true;
+                    $decisionReason = 'factor≈1/k (delta-like)';
+                } else {
+                    // если не попали в коридор толерантности, выбираем ближайшую цель
+                    $dRate  = abs($factor - $targetRate);
+                    $dDelta = abs($factor - $targetDelta);
+                    $scaleCorridor = ($dDelta < $dRate); // ближе к 1/k => включаем скейл
+                    $decisionReason = $scaleCorridor ? 'closer_to_1/k' : 'closer_to_1';
+                }
+
+                $this->logger->info(
+                    "Autoscale(k={$k}) for {$labelsJson}: "
+                    . "S.count={$countS}, S.avg100={$avgS100}, "
+                    . "win=[{$fromAligned},{$toAligned}], Sdiv={$Sdiv}, "
+                    . "S/k.count={$countSdiv}, S/k.avg={$avgSdiv}, factor={$factor}, "
+                    . "decision=" . ($scaleCorridor ? 'true' : 'false') . " ({$decisionReason})"
+                );
+            } else {
+                $this->logger->info(
+                    "Autoscale(k={$k}) insufficient S/k data for {$labelsJson}: "
+                    . "S.count={$countS}, S.avg100={$avgS100}, S/k.count={$countSdiv}, S/k.avg={$avgSdiv}"
+                );
+            }
+        }
+        
         // Генерируем DFT
         $bounds = $this->dataProcessor->calculateBounds($historyData, $longStart, $longEnd, $longStep);
         $dftResult = $this->dftProcessor->generateDFT($bounds, $longStart, $longEnd, $longStep);
