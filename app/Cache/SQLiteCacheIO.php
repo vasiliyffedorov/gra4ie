@@ -24,6 +24,82 @@ class SQLiteCacheIO
         $this->configManager = new SQLiteCacheConfig($logger);
     }
 
+    // L1 autoscale cache (no TTL cleanup)
+    public function saveAutoscaleL1(string $query, string $labelsJson, array $info): bool
+    {
+        $db = $this->dbManager->getDb();
+        try {
+            $queryId = $this->configManager->getOrCreateQueryId($this->dbManager, $query, null, null);
+            $metricHash = $this->generateCacheKey($query, $labelsJson);
+
+            $requestMd5 = (string)($info['request_md5'] ?? '');
+            $scaleCorridor = !empty($info['scale_corridor']) ? 1 : 0;
+            $k = (int)($info['k'] ?? 8);
+            $factor = isset($info['factor']) ? (float)$info['factor'] : null;
+
+            $stmt = $db->prepare("
+                INSERT OR REPLACE INTO autoscale_l1
+                (query_id, metric_hash, request_md5, scale_corridor, k, factor, updated_at)
+                VALUES (:query_id, :metric_hash, :request_md5, :scale_corridor, :k, :factor, CURRENT_TIMESTAMP)
+            ");
+            $ok = $stmt->execute([
+                ':query_id' => $queryId,
+                ':metric_hash' => $metricHash,
+                ':request_md5' => $requestMd5,
+                ':scale_corridor' => $scaleCorridor,
+                ':k' => $k,
+                ':factor' => $factor
+            ]);
+            if ($ok) {
+                $this->logger->info("L1 autoscale saved: query_id={$queryId}, metric_hash={$metricHash}, scale={$scaleCorridor}, k={$k}, factor=" . ($factor ?? 'null'));
+            }
+            return (bool)$ok;
+        } catch (\PDOException $e) {
+            $this->logger->error("Не удалось сохранить L1 autoscale: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function loadAutoscaleL1(string $query, string $labelsJson): ?array
+    {
+        $db = $this->dbManager->getDb();
+        try {
+            // resolve query_id; if no row in queries, nothing to return
+            $stmtQ = $db->prepare("SELECT id FROM queries WHERE query = :query");
+            $stmtQ->execute([':query' => $query]);
+            $qid = $stmtQ->fetchColumn();
+            if (!$qid) {
+                return null;
+            }
+
+            $metricHash = $this->generateCacheKey($query, $labelsJson);
+            $stmt = $db->prepare("
+                SELECT request_md5, scale_corridor, k, factor, updated_at
+                FROM autoscale_l1
+                WHERE query_id = :query_id AND metric_hash = :metric_hash
+                LIMIT 1
+            ");
+            $stmt->execute([
+                ':query_id' => $qid,
+                ':metric_hash' => $metricHash
+            ]);
+            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+            if (!$row) {
+                return null;
+            }
+            return [
+                'request_md5' => (string)$row['request_md5'],
+                'scale_corridor' => (int)$row['scale_corridor'] === 1,
+                'k' => (int)$row['k'],
+                'factor' => isset($row['factor']) ? (float)$row['factor'] : null,
+                'updated_at' => $row['updated_at']
+            ];
+        } catch (\PDOException $e) {
+            $this->logger->error("Не удалось загрузить L1 autoscale: " . $e->getMessage());
+            return null;
+        }
+    }
+
     public function generateCacheKey(string $query, string $labelsJson): string
     {
         return md5($query . $labelsJson);

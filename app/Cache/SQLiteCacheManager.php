@@ -72,6 +72,17 @@ class SQLiteCacheManager implements CacheManagerInterface
         return $this->ioManager->shouldRecreateCache($query, $labelsJson, $config);
     }
 
+    // L1 autoscale cache (no TTL cleanup)
+    public function saveAutoscaleL1(string $query, string $labelsJson, array $info): bool
+    {
+        return $this->ioManager->saveAutoscaleL1($query, $labelsJson, $info);
+    }
+
+    public function loadAutoscaleL1(string $query, string $labelsJson): ?array
+    {
+        return $this->ioManager->loadAutoscaleL1($query, $labelsJson);
+    }
+
 
     // Делегирование методов обслуживания
     public function cleanupOldEntries(int $maxAgeDays = 30): void

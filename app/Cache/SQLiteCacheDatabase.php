@@ -91,6 +91,25 @@ class SQLiteCacheDatabase
             )
         ");
         $this->db->exec("INSERT OR IGNORE INTO grafana_metrics (metrics_key, metrics_json) VALUES ('global_metrics', '{}')");
+
+        // L1 cache table for metrics
+        $this->db->exec("
+            CREATE TABLE IF NOT EXISTS metrics_cache_l1 (
+                query_id INTEGER NOT NULL,
+                metric_hash TEXT NOT NULL,
+                request_md5 TEXT NOT NULL,
+                optimal_period_days REAL NULL,
+                scale_corridor INTEGER NOT NULL DEFAULT 0,
+                k INTEGER NOT NULL DEFAULT 8,
+                factor REAL NULL,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (query_id, metric_hash)
+            )
+        ");
+        // Optional indices for performance
+        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_metrics_cache_l1_query_id ON metrics_cache_l1(query_id)");
+        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_metrics_cache_l1_request_md5 ON metrics_cache_l1(request_md5)");
+
         $this->db->exec("CREATE INDEX IF NOT EXISTS idx_queries_query ON queries(query)");
         $this->db->exec("CREATE INDEX IF NOT EXISTS idx_dft_cache_query_id ON dft_cache(query_id)");
         $this->db->exec("CREATE INDEX IF NOT EXISTS idx_dft_cache_metric_hash ON dft_cache(metric_hash)");
@@ -98,85 +117,29 @@ class SQLiteCacheDatabase
 
     private function checkAndMigrateDatabase(): void
     {
-        $result = $this->db->query(\sprintf("PRAGMA table_info(queries)"));
-        $columns = $result->fetchAll(\PDO::FETCH_ASSOC);
-        $hasCustomParams = false;
-        $hasConfigHash = false;
-        foreach ($columns as $column) {
-            if ($column['name'] === 'custom_params') {
-                $hasCustomParams = true;
+        try {
+            $mcl1Exists = $this->db->query(\sprintf("SELECT name FROM sqlite_master WHERE type='table' AND name='metrics_cache_l1'"))->fetchColumn();
+            if (!$mcl1Exists) {
+                $this->logger->warning("Создание таблицы metrics_cache_l1.");
+                $this->db->exec("
+                    CREATE TABLE IF NOT EXISTS metrics_cache_l1 (
+                        query_id INTEGER NOT NULL,
+                        metric_hash TEXT NOT NULL,
+                        request_md5 TEXT NOT NULL,
+                        optimal_period_days REAL NULL,
+                        scale_corridor INTEGER NOT NULL DEFAULT 0,
+                        k INTEGER NOT NULL DEFAULT 8,
+                        factor REAL NULL,
+                        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (query_id, metric_hash)
+                    )
+                ");
+                $this->db->exec("CREATE INDEX IF NOT EXISTS idx_metrics_cache_l1_query_id ON metrics_cache_l1(query_id)");
+                $this->db->exec("CREATE INDEX IF NOT EXISTS idx_metrics_cache_l1_request_md5 ON metrics_cache_l1(request_md5)");
+                $this->logger->info("Таблица metrics_cache_l1 создана.");
             }
-            if ($column['name'] === 'config_hash') {
-                $hasConfigHash = true;
-            }
-        }
-        if (!$hasCustomParams) {
-            $this->logger->warning("Добавление столбца custom_params в таблицу queries.");
-            $this->db->exec("ALTER TABLE queries ADD COLUMN custom_params TEXT");
-            $this->logger->info("Столбец custom_params добавлен в таблицу queries.");
-        }
-        if (!$hasConfigHash) {
-            $this->logger->warning("Добавление столбца config_hash в таблицу queries.");
-            $this->db->exec("ALTER TABLE queries ADD COLUMN config_hash TEXT");
-            $this->logger->info("Столбец config_hash добавлен в таблицу queries.");
-        }
-
-        $result = $this->db->query(\sprintf("PRAGMA table_info(dft_cache)"));
-        $columns = $result->fetchAll(\PDO::FETCH_ASSOC);
-        $hasUpperTrend = false;
-        $hasLowerTrend = false;
-        foreach ($columns as $column) {
-            if ($column['name'] === 'upper_trend_json') {
-                $hasUpperTrend = true;
-            }
-            if ($column['name'] === 'lower_trend_json') {
-                $hasLowerTrend = true;
-            }
-        }
-        if (!$hasUpperTrend) {
-            $this->logger->warning("Добавление столбца upper_trend_json в таблицу dft_cache.");
-            $this->db->exec("ALTER TABLE dft_cache ADD COLUMN upper_trend_json TEXT");
-            $this->logger->info("Столбец upper_trend_json добавлен в таблицу dft_cache.");
-        }
-        if (!$hasLowerTrend) {
-            $this->logger->warning("Добавление столбца lower_trend_json в таблицу dft_cache.");
-            $this->db->exec("ALTER TABLE dft_cache ADD COLUMN lower_trend_json TEXT");
-            $this->logger->info("Столбец lower_trend_json добавлен в таблицу dft_cache.");
-        }
-
-        // Migrate for grafana_metrics table
-        $tableExists = $this->db->query(\sprintf("SELECT name FROM sqlite_master WHERE type='table' AND name='grafana_metrics'"))->fetchColumn();
-        if (!$tableExists) {
-            $this->logger->warning("Создание таблицы grafana_metrics.");
-            $this->db->exec("
-                CREATE TABLE grafana_metrics (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    metrics_key TEXT UNIQUE NOT NULL DEFAULT 'global_metrics',
-                    metrics_json TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ");
-            $this->db->exec("INSERT INTO grafana_metrics (metrics_key, metrics_json) VALUES ('global_metrics', '{}')");
-            $this->logger->info("Таблица grafana_metrics создана и инициализирована.");
-        }
-
-        // Migrate for metrics_max_periods table
-        $tableExists = $this->db->query(\sprintf("SELECT name FROM sqlite_master WHERE type='table' AND name='metrics_max_periods'"))->fetchColumn();
-        if (!$tableExists) {
-            $this->logger->warning("Создание таблицы metrics_max_periods.");
-            $this->db->exec("
-                CREATE TABLE metrics_max_periods (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    metric_key TEXT UNIQUE NOT NULL,
-                    max_period_days FLOAT NOT NULL,
-                    datasource_type TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ");
-            $this->db->exec("CREATE INDEX IF NOT EXISTS idx_max_periods_key ON metrics_max_periods(metric_key)");
-            $this->logger->info("Таблица metrics_max_periods создана.");
+        } catch (\PDOException $e) {
+            $this->logger->error("Ошибка при создании таблицы metrics_cache_l1: " . $e->getMessage());
         }
     }
 }
