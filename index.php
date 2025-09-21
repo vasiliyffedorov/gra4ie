@@ -94,6 +94,16 @@ function nest(array $flatEntries): array {
 
 $config = nest($flatIni);
 
+// ENV override (GRAFANA_URL / GRAFANA_API_TOKEN имеют приоритет над INI)
+$envUrl = getenv('GRAFANA_URL');
+if ($envUrl !== false && $envUrl !== '') {
+    $config['grafana_url'] = $envUrl;
+}
+$envToken = getenv('GRAFANA_API_TOKEN');
+if ($envToken !== false && $envToken !== '') {
+    $config['grafana_api_token'] = $envToken;
+}
+
 // Валидация конфига
 $requiredKeys = ['grafana_url', 'grafana_api_token', 'log_file'];
 foreach ($requiredKeys as $key) {
@@ -104,6 +114,9 @@ foreach ($requiredKeys as $key) {
 
 $container = new \App\DI\Container($config);
 $logger = $container->get(\App\Interfaces\LoggerInterface::class);
+if (empty($config['grafana_api_token'])) {
+    $logger->warning('GRAFANA_API_TOKEN is empty after INI and ENV overrides. Set ENV GRAFANA_API_TOKEN to avoid auth failures.');
+}
 $proxy = $container->get(\App\Interfaces\GrafanaClientInterface::class);
 
 $directories = [

@@ -1,7 +1,8 @@
 ; Основные настройки
+; GRAFANA_URL и GRAFANA_API_TOKEN имеют приоритет над INI (используйте ENV для секретов)
 log_file = "./logs/corridor.log"
 log_level = "DEBUG"
-grafana_url = "http://localhost:3000"
+grafana_url = ""
 grafana_api_token = ""
 scaleCorridor = false
 
@@ -10,6 +11,8 @@ blacklist_datasource_ids = ceh9u3ymlpdz4b, ceptwsd7y2tj4d
 corrdor_params.type = "adaptive"
 corrdor_params.step = 1800
 corrdor_params.historical_period_days = 12.17
+corrdor_params.test_periods = "1m,5m,10m,30m,1h,6h,1d,7d,30d,60d"
+corrdor_params.fetch_timeout_sec = 30
 
 corrdor_params.window_size = 10
 corrdor_params.margin_percent = 10

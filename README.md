@@ -40,10 +40,17 @@ Gra4ie — это PHP-приложение для анализа метрик с
 
 Отредактируйте файл `config/config.cfg`:
 
-- `grafana_token`: View-only токен из целевой Grafana.
+- `grafana_token`: View-only токен из целевой Grafana (или используйте ENV GRAFANA_API_TOKEN).
+- `grafana_url`: URL Grafana (или используйте ENV GRAFANA_URL).
 - `blacklist_boards`: Список ID дашбордов для исключения (чтобы избежать анализа собственных дашбордов и зацикливания).
 - `cache_path`: Путь к SQLite-файлу кэша (по умолчанию `./cache.db`).
 - `log_level`: Уровень логирования (debug/info/error).
+- `performance.threshold_ms`: Порог производительности (рекомендуется 50–100 мс в проде).
+
+### ENV overrides
+Секреты и URL можно переопределять через переменные окружения:
+- `GRAFANA_URL`: Переопределяет grafana_url из конфига.
+- `GRAFANA_API_TOKEN`: Переопределяет grafana_api_token (не храните токены в VCS).
 
 Дополнительно:
 - В Grafana добавьте новый источник данных формата Prometheus по адресу `<your-ip>:9093`.

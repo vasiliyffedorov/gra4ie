@@ -83,6 +83,16 @@ class SQLiteCacheManager implements CacheManagerInterface
         return $this->ioManager->loadAutoscaleL1($query, $labelsJson);
     }
 
+    // Permanent metrics cache
+    public function saveMetricsCacheL1(string $query, string $labelsJson, array $info): bool
+    {
+        return $this->ioManager->saveMetricsCacheL1($query, $labelsJson, $info);
+    }
+
+    public function loadMetricsCacheL1(string $query, string $labelsJson): ?array
+    {
+        return $this->ioManager->loadMetricsCacheL1($query, $labelsJson);
+    }
 
     // Делегирование методов обслуживания
     public function cleanupOldEntries(int $maxAgeDays = 30): void
@@ -113,44 +123,22 @@ class SQLiteCacheManager implements CacheManagerInterface
 
     public function saveGrafanaMetrics(array $metrics): bool
     {
-        return $this->grafanaMetricsCache->saveMetrics($metrics);
+        return $this->ioManager->saveGrafanaMetrics($metrics);
     }
 
     public function loadGrafanaMetrics(): ?array
     {
-        return $this->grafanaMetricsCache->loadMetrics();
+        return $this->ioManager->loadGrafanaMetrics();
     }
 
     public function loadMaxPeriod(string $metricKey): ?float
     {
-        try {
-            $db = $this->dbManager->getDb();
-            $stmt = $db->prepare("SELECT max_period_days FROM metrics_max_periods WHERE metric_key = :metric_key");
-            $stmt->execute([':metric_key' => $metricKey]);
-            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
-            return $row ? (float)$row['max_period_days'] : null;
-        } catch (\PDOException $e) {
-            $this->logger->error("Ошибка загрузки max_period для $metricKey: " . $e->getMessage());
-            return null;
-        }
+        return $this->ioManager->loadMaxPeriod($metricKey);
     }
 
     public function saveMaxPeriod(string $metricKey, float $maxPeriodDays, string $datasourceType = ''): bool
     {
-        try {
-            $db = $this->dbManager->getDb();
-            $stmt = $db->prepare("INSERT OR REPLACE INTO metrics_max_periods (metric_key, max_period_days, datasource_type, last_updated) VALUES (:metric_key, :max_period_days, :datasource_type, CURRENT_TIMESTAMP)");
-            $result = $stmt->execute([
-                ':metric_key' => $metricKey,
-                ':max_period_days' => $maxPeriodDays,
-                ':datasource_type' => $datasourceType
-            ]);
-            $this->logger->info("Сохранен max_period $maxPeriodDays дней для $metricKey (datasource: $datasourceType)");
-            return $result;
-        } catch (\PDOException $e) {
-            $this->logger->error("Ошибка сохранения max_period для $metricKey: " . $e->getMessage());
-            return false;
-        }
+        return $this->ioManager->saveMaxPeriod($metricKey, $maxPeriodDays);
     }
 
     public function cleanupLevel2(int $ttl): void

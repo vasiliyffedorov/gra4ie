@@ -84,6 +84,22 @@ class StatsCacheManager {
             return $cached;
         }
 
+        // L1 cache integration
+        $requestMd5 = $this->client->getNormalizedRequestMd5($query) ?: '';
+        $l1 = $this->cacheManager->loadMetricsCacheL1($query, $labelsJson);
+        $l1Status = 'MISS';
+        if ($l1) {
+            if ($l1['request_md5'] === $requestMd5) {
+                $l1Status = 'HIT';
+                $this->logger->info("L1 HIT: query={$query}, labels={$labelsJson}, md5={$requestMd5}, period={$l1['optimal_period_days']}, scale={$l1['scale_corridor']}, k={$l1['k']}, factor={$l1['factor']}");
+            } else {
+                $l1Status = 'STALE';
+                $this->logger->info("L1 STALE: query={$query}, labels={$labelsJson}, old={$l1['request_md5']}, new={$requestMd5}, action=force_recalc");
+            }
+        } else {
+            $this->logger->info("L1 MISS: query={$query}, labels={$labelsJson}, md5={$requestMd5}");
+        }
+
         // Обновляем конфиг в процессорах
         $this->dataProcessor->updateConfig($currentConfig);
         $this->anomalyDetector->updateConfig($currentConfig);
@@ -134,12 +150,13 @@ class StatsCacheManager {
             }
         }
 
-        // Автотюн периода, если достаточно данных
+        // Автотюн периода, если достаточно данных (заморозить если L1 HIT с period)
         $autotuned = false;
         $originalHistoryData = $historyData;
         $originalLongStart = $longStart;
         $originalLongEnd = $longEnd;
-        if (count($historyData) >= 100) {
+        $freezeAutotune = ($l1Status === 'HIT' && $l1['optimal_period_days'] !== null);
+        if (!$freezeAutotune && count($historyData) >= 100) {
             $historicalAssoc = [];
             foreach ($historyData as $point) {
                 $historicalAssoc[(int)$point['time']] = (float)$point['value'];
@@ -170,6 +187,8 @@ class StatsCacheManager {
             } catch (\InvalidArgumentException $e) {
                 $this->logger->warning("Автотюн не удался для {$labelsJson}: " . $e->getMessage());
             }
+        } elseif ($freezeAutotune) {
+            $this->logger->info("Автотюн заморожен L1 HIT для {$labelsJson}: период {$l1['optimal_period_days']} дней");
         }
 
         // Автоматическое определение необходимости масштабирования (обобщённый алгоритм по последним 100 ненулевым точкам)
@@ -192,10 +211,13 @@ class StatsCacheManager {
         $avgS100 = $countS > 0 ? (array_sum(array_column($tail, 'value')) / $countS) : 0.0;
         $minTs = $countS > 0 ? min(array_column($tail, 'time')) : null;
 
-        // по умолчанию — скейла нет
-        $scaleCorridor = false;
+        // по умолчанию — скейла нет (применить HIT если есть)
+        $scaleCorridor = ($l1Status === 'HIT' && $l1['scale_corridor']) ? $l1['scale_corridor'] : false;
+        $freezeScaleDetection = ($l1Status === 'HIT' && $l1['scale_corridor'] !== null);
 
-        if ($countS === 0 || $avgS100 <= 0.0 || $minTs === null) {
+        if ($freezeScaleDetection) {
+            $this->logger->info("Autoscale detection заморожена L1 HIT для {$labelsJson}: scale={$scaleCorridor}");
+        } elseif ($countS === 0 || $avgS100 <= 0.0 || $minTs === null) {
             $this->logger->info("Autoscale(k={$k}) insufficient S data for {$labelsJson}: countS={$countS}, avgS100={$avgS100}");
         } else {
             // 2) Выравниваем границы для окна проверки и запрашиваем ряд на шаге S/k
@@ -280,13 +302,14 @@ class StatsCacheManager {
         }
 
         // Фильтруем «нулевые» гармоники
+        $minAmp = (float)($currentConfig['corrdor_params']['min_amplitude'] ?? 1e-12);
         $dftResult['upper']['coefficients'] = array_filter(
             $dftResult['upper']['coefficients'],
-            fn($c) => $c['amplitude'] >= 1e-12
+            fn($c) => $c['amplitude'] >= $minAmp
         );
         $dftResult['lower']['coefficients'] = array_filter(
             $dftResult['lower']['coefficients'],
-            fn($c) => $c['amplitude'] >= 1e-12
+            fn($c) => $c['amplitude'] >= $minAmp
         );
 
         // Восстанавливаем траектории
@@ -338,6 +361,16 @@ class StatsCacheManager {
 
         // Сохраняем в кэш
         $this->cacheManager->saveToCache($query, $labelsJson, $payload, $currentConfig);
+
+        // Сохраняем в L1
+        $optimalPeriodDays = $autotuned ? $currentConfig['corrdor_params']['historical_period_days'] : null;
+        $this->cacheManager->saveMetricsCacheL1($query, $labelsJson, [
+            'request_md5' => $requestMd5,
+            'optimal_period_days' => $optimalPeriodDays,
+            'scale_corridor' => $scaleCorridor,
+            'k' => $k,
+            'factor' => isset($factor) ? $factor : null,
+        ]);
 
         return $payload;
     }

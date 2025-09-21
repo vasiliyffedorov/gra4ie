@@ -100,9 +100,106 @@ class SQLiteCacheIO
         }
     }
 
+    // Permanent metrics cache
+    public function saveMetricsCacheL1(string $query, string $labelsJson, array $info): bool
+    {
+        $db = $this->dbManager->getDb();
+        try {
+            $queryId = $this->configManager->getOrCreateQueryId($this->dbManager, $query, null, null);
+            $metricHash = $this->generateCacheKey($query, $labelsJson);
+
+            $requestMd5 = (string)($info['request_md5'] ?? '');
+            $optimalPeriodDays = isset($info['optimal_period_days']) ? (float)$info['optimal_period_days'] : null;
+            $scaleCorridor = !empty($info['scale_corridor']) ? 1 : 0;
+            $k = (int)($info['k'] ?? 8);
+            $factor = isset($info['factor']) ? (float)$info['factor'] : null;
+
+            $stmt = $db->prepare("
+                INSERT OR REPLACE INTO metrics_cache_permanent
+                (query_id, metric_hash, request_md5, optimal_period_days, scale_corridor, k, factor, updated_at)
+                VALUES (:query_id, :metric_hash, :request_md5, :optimal_period_days, :scale_corridor, :k, :factor, CURRENT_TIMESTAMP)
+            ");
+            $ok = $stmt->execute([
+                ':query_id' => $queryId,
+                ':metric_hash' => $metricHash,
+                ':request_md5' => $requestMd5,
+                ':optimal_period_days' => $optimalPeriodDays,
+                ':scale_corridor' => $scaleCorridor,
+                ':k' => $k,
+                ':factor' => $factor
+            ]);
+            if ($ok) {
+                $this->logger->info("L1 metrics saved: query_id={$queryId}, metric_hash={$metricHash}, md5={$requestMd5}, period={$optimalPeriodDays}, scale={$scaleCorridor}, k={$k}, factor=" . ($factor ?? 'null'));
+            }
+            return (bool)$ok;
+        } catch (\PDOException $e) {
+            $this->logger->error("Не удалось сохранить L1 metrics: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function loadMetricsCacheL1(string $query, string $labelsJson): ?array
+    {
+        $db = $this->dbManager->getDb();
+        try {
+            // resolve query_id; if no row in queries, nothing to return
+            $stmtQ = $db->prepare("SELECT id FROM queries WHERE query = :query");
+            $stmtQ->execute([':query' => $query]);
+            $qid = $stmtQ->fetchColumn();
+            if (!$qid) {
+                return null;
+            }
+
+            $metricHash = $this->generateCacheKey($query, $labelsJson);
+            $stmt = $db->prepare("
+                SELECT request_md5, optimal_period_days, scale_corridor, k, factor, updated_at
+                FROM metrics_cache_permanent
+                WHERE query_id = :query_id AND metric_hash = :metric_hash
+                LIMIT 1
+            ");
+            $stmt->execute([
+                ':query_id' => $qid,
+                ':metric_hash' => $metricHash
+            ]);
+            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+            if (!$row) {
+                return null;
+            }
+            return [
+                'request_md5' => (string)$row['request_md5'],
+                'optimal_period_days' => isset($row['optimal_period_days']) ? (float)$row['optimal_period_days'] : null,
+                'scale_corridor' => (int)$row['scale_corridor'] === 1,
+                'k' => (int)$row['k'],
+                'factor' => isset($row['factor']) ? (float)$row['factor'] : null,
+                'updated_at' => $row['updated_at']
+            ];
+        } catch (\PDOException $e) {
+            $this->logger->error("Не удалось загрузить L1 metrics: " . $e->getMessage());
+            return null;
+        }
+    }
+
     public function generateCacheKey(string $query, string $labelsJson): string
     {
-        return md5($query . $labelsJson);
+        // Канонизация: deep sort labelsJson если это массив
+        $labels = json_decode($labelsJson, true);
+        if (is_array($labels)) {
+            $this->deepKsort($labels);
+            $normalizedLabelsJson = json_encode($labels, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        } else {
+            $normalizedLabelsJson = $labelsJson;
+        }
+        return md5($query . $normalizedLabelsJson);
+    }
+
+    private function deepKsort(array &$arr): void
+    {
+        foreach ($arr as &$v) {
+            if (is_array($v)) {
+                $this->deepKsort($v);
+            }
+        }
+        ksort($arr);
     }
 
     public function saveToCache(string $query, string $labelsJson, array $data, array $currentConfig): bool
@@ -328,6 +425,69 @@ class SQLiteCacheIO
                 "UPDATE dft_cache SET last_accessed = CURRENT_TIMESTAMP
                 WHERE query_id = :query_id AND metric_hash = :metric_hash"
             )->execute([':query_id' => $queryId, ':metric_hash' => $metricHash]);
+        }
+    }
+
+    public function saveGrafanaMetrics(array $metrics): bool
+    {
+        $db = $this->dbManager->getDb();
+        try {
+            foreach ($metrics as $query => $info) {
+                $payload = json_encode($info, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                $stmt = $db->prepare("INSERT OR REPLACE INTO grafana_metrics (query, payload_json, updated_at) VALUES (:query, :payload, CURRENT_TIMESTAMP)");
+                $stmt->execute([':query' => $query, ':payload' => $payload]);
+            }
+            $this->logger->info("Grafana metrics saved successfully");
+            return true;
+        } catch (\PDOException $e) {
+            $this->logger->error("Failed to save Grafana metrics: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function loadGrafanaMetrics(): array
+    {
+        $db = $this->dbManager->getDb();
+        try {
+            $stmt = $db->prepare("SELECT query, payload_json FROM grafana_metrics");
+            $stmt->execute();
+            $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+            $result = [];
+            foreach ($rows as $row) {
+                $result[$row['query']] = json_decode($row['payload_json'], true);
+            }
+            return $result;
+        } catch (\PDOException $e) {
+            $this->logger->error("Failed to load Grafana metrics: " . $e->getMessage());
+            return [];
+        }
+    }
+
+    public function saveMaxPeriod(string $metricKey, float $maxPeriodDays): bool
+    {
+        $db = $this->dbManager->getDb();
+        try {
+            $stmt = $db->prepare("INSERT OR REPLACE INTO metrics_max_periods (metric_key, max_period_days, updated_at) VALUES (:key, :period, CURRENT_TIMESTAMP)");
+            $stmt->execute([':key' => $metricKey, ':period' => $maxPeriodDays]);
+            $this->logger->info("Max period saved for metric: $metricKey");
+            return true;
+        } catch (\PDOException $e) {
+            $this->logger->error("Failed to save max period: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function loadMaxPeriod(string $metricKey): ?float
+    {
+        $db = $this->dbManager->getDb();
+        try {
+            $stmt = $db->prepare("SELECT max_period_days FROM metrics_max_periods WHERE metric_key = :key LIMIT 1");
+            $stmt->execute([':key' => $metricKey]);
+            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+            return $row ? (float)$row['max_period_days'] : null;
+        } catch (\PDOException $e) {
+            $this->logger->error("Failed to load max period: " . $e->getMessage());
+            return null;
         }
     }
 }

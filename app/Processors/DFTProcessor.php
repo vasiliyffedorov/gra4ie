@@ -114,7 +114,7 @@ class DFTProcessor implements DFTProcessorInterface {
             $slope = ($sumXY - $n * $meanX * $meanY) / $denominator;
             $intercept = $meanY - $slope * $meanX;
 
-            $this->logger->info("Вычислен тренд: slope=$slope, intercept=$intercept");
+            $this->logger->debug("Вычислен тренд: slope=$slope, intercept=$intercept");
             return ['slope' => $slope, 'intercept' => $intercept];
         } catch (\Throwable $e) {
             $this->logger->error("Error calculating linear trend: " . $e->getMessage(), __FILE__, __LINE__);

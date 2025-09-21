@@ -19,4 +19,9 @@ interface CacheManagerInterface
     public function saveAutoscaleL1(string $query, string $labelsJson, array $info): bool;
 
     public function loadAutoscaleL1(string $query, string $labelsJson): ?array;
+
+    // Permanent metrics cache (request_md5 + optimal_period + scale flags)
+    public function saveMetricsCacheL1(string $query, string $labelsJson, array $info): bool;
+
+    public function loadMetricsCacheL1(string $query, string $labelsJson): ?array;
 }

@@ -15,5 +15,7 @@ interface GrafanaClientInterface
 
     public function getQueryForMetric(string $metricName): string|false;
 
+    public function getNormalizedRequestMd5(string $metricName): string|false;
+
     public function createDangerDashboard(string $metricName, string $folderUid): string|false;
 }

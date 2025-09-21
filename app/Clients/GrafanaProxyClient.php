@@ -17,6 +17,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
     private array $headers;
     private array $blacklistDatasourceIds; // New property for blacklisted datasource IDs
     private CacheManagerInterface $cacheManager;
+    private array $dashCache = [];
 
     /** тип последнего datasource, на который сделали queryRange */
     private string $lastDataSourceType = 'unknown';
@@ -72,14 +73,12 @@ class GrafanaProxyClient implements GrafanaClientInterface
 
         $info = $this->metricsCache[$metricName];
 
-        // 1) Получаем JSON дашборда
-        $dashJson = $this->httpRequest('GET', "{$this->grafanaUrl}/api/dashboards/uid/{$info['dashboard_uid']}");
-        if (!$dashJson) {
+        // 1) Получаем JSON дашборда (с in-request кэшем)
+        $dashData = $this->fetchDashboardData($info['dashboard_uid']);
+        if (!$dashData) {
             $this->logger->error("Не удалось получить JSON дашборда {$info['dashboard_uid']}");
             return [];
         }
-
-        $dashData = json_decode($dashJson, true);
         $panels   = $dashData['dashboard']['panels'] ?? [];
         $target   = null;
         foreach ($panels as $p) {
@@ -281,6 +280,59 @@ class GrafanaProxyClient implements GrafanaClientInterface
     }
 
     /**
+     * In-request cache для JSON дашборда.
+     */
+    private function fetchDashboardData(string $uid): ?array
+    {
+        if (isset($this->dashCache[$uid])) {
+            return $this->dashCache[$uid];
+        }
+        $dashJson = $this->httpRequest('GET', "{$this->grafanaUrl}/api/dashboards/uid/{$uid}");
+        if (!$dashJson) {
+            return null;
+        }
+        $dashData = json_decode($dashJson, true);
+        if (!is_array($dashData)) {
+            return null;
+        }
+        $this->dashCache[$uid] = $dashData;
+        return $dashData;
+    }
+
+    private function deepKsort(array &$arr): void
+    {
+        foreach ($arr as &$v) {
+            if (is_array($v)) {
+                $this->deepKsort($v);
+            }
+        }
+        ksort($arr);
+    }
+
+    private function removeNulls(array &$arr): void
+    {
+        foreach ($arr as $k => &$v) {
+            if (is_array($v)) {
+                $this->removeNulls($v);
+                if ($v === []) {
+                    unset($arr[$k]);
+                }
+            } elseif ($v === null) {
+                unset($arr[$k]);
+            }
+        }
+    }
+
+    private function stripVolatileFields(array &$arr, array $volatileKeys): void
+    {
+        foreach ($volatileKeys as $vk) {
+            if (isset($arr[$vk])) {
+                unset($arr[$vk]);
+            }
+        }
+    }
+
+    /**
      * Конвертирует Grafana frames → Prometheus-like array.
      */
     private function parseFrames(array $data, array $info): array
@@ -338,14 +390,12 @@ class GrafanaProxyClient implements GrafanaClientInterface
 
         $info = $this->metricsCache[$metricName];
 
-        // Получаем JSON дашборда
-        $dashJson = $this->httpRequest('GET', "{$this->grafanaUrl}/api/dashboards/uid/{$info['dashboard_uid']}");
-        if (!$dashJson) {
+        // Получаем JSON дашборда (с in-request кэшем)
+        $dashData = $this->fetchDashboardData($info['dashboard_uid']);
+        if (!$dashData) {
             $this->logger->error("Не удалось получить JSON дашборда {$info['dashboard_uid']}");
             return false;
         }
-
-        $dashData = json_decode($dashJson, true);
         $panels = $dashData['dashboard']['panels'] ?? [];
         $targetPanel = null;
         foreach ($panels as $p) {
@@ -633,6 +683,128 @@ class GrafanaProxyClient implements GrafanaClientInterface
     }
 
     /**
+     * Возвращает нормализованный md5 ядра запроса для панели метрики.
+     */
+    public function getNormalizedRequestMd5(string $metricName): string|false
+    {
+        if (!isset($this->metricsCache[$metricName])) {
+            $this->logger->error("Метрика не найдена в кэше: $metricName");
+            return false;
+        }
+        $info = $this->metricsCache[$metricName];
+        $dashData = $this->fetchDashboardData($info['dashboard_uid']);
+        if (!$dashData) {
+            $this->logger->error("Не удалось получить JSON дашборда {$info['dashboard_uid']} для MD5");
+            return false;
+        }
+        $panels = $dashData['dashboard']['panels'] ?? [];
+        $targetPanel = null;
+        foreach ($panels as $p) {
+            if ((string)$p['id'] === $info['panel_id']) {
+                $targetPanel = $p;
+                break;
+            }
+        }
+        if (!$targetPanel || empty($targetPanel['targets'])) {
+            $this->logger->warning("Панель {$info['panel_id']} не найдена или без targets");
+            return false;
+        }
+
+        // Берем первый target как канонический
+        $t = $targetPanel['targets'][0];
+        $ds = $t['datasource'] ?? [];
+        $dsType = strtolower($ds['type'] ?? $ds['name'] ?? 'unknown');
+
+        // Общие поля
+        $core = [
+            'datasource' => [
+                'type' => $ds['type'] ?? null,
+                'uid'  => $ds['uid']  ?? null,
+            ],
+        ];
+        if (isset($t['editorMode'])) $core['editorMode'] = $t['editorMode'];
+        if (isset($t['queryType']))  $core['queryType']  = $t['queryType'];
+
+        // Специфика по источникам
+        if ($dsType === 'prometheus') {
+            if (isset($t['expr'])) $core['expr'] = $t['expr'];
+        } elseif ($dsType === 'elasticsearch') {
+            if (isset($t['query'])) $core['query'] = $t['query'];
+            if (isset($t['timeField'])) $core['timeField'] = $t['timeField'];
+            if (isset($t['bucketAggs']) && is_array($t['bucketAggs'])) {
+                $bucketAggs = $t['bucketAggs'];
+                // Удаляем volatile/id-поля
+                foreach ($bucketAggs as &$agg) {
+                    unset($agg['id'], $agg['$$hashKey']);
+                }
+                $core['bucketAggs'] = $bucketAggs;
+            }
+            if (isset($t['metrics']) && is_array($t['metrics'])) {
+                $metrics = [];
+                foreach ($t['metrics'] as $m) {
+                    $metrics[] = [
+                        'type' => $m['type'] ?? null,
+                        'params' => $m['params'] ?? [],
+                    ];
+                }
+                $core['metrics'] = $metrics;
+            }
+        } elseif ($dsType === 'vertamedia-clickhouse-datasource' || $dsType === 'clickhouse' || $dsType === 'grafana-clickhouse-datasource') {
+            if (!empty($t['rawSql'] ?? '')) {
+                $core['rawSql'] = $t['rawSql'];
+            } elseif (!empty($t['builderOptions'] ?? [])) {
+                $bo = $t['builderOptions'];
+                $core['builder'] = [
+                    'database' => $bo['database'] ?? null,
+                    'table' => $bo['table'] ?? null,
+                    'timeField' => $bo['timeField'] ?? null,
+                    'timeFieldType' => $bo['timeFieldType'] ?? null,
+                    'metrics' => [],
+                    'filters' => [],
+                    'groupBy' => $bo['groupBy'] ?? [],
+                    'orderBy' => $bo['orderBy'] ?? [],
+                    'mode' => $bo['mode'] ?? null,
+                    'selectedFormat' => $bo['selectedFormat'] ?? null,
+                    'queryType' => $t['queryType'] ?? null,
+                ];
+                if (!empty($bo['metrics'])) {
+                    foreach ($bo['metrics'] as $m) {
+                        $core['builder']['metrics'][] = [
+                            'aggregation' => $m['aggregation'] ?? null,
+                            'field' => $m['field'] ?? null,
+                        ];
+                    }
+                }
+                if (!empty($bo['filters'])) {
+                    foreach ($bo['filters'] as $f) {
+                        // исключаем временные фильтры
+                        if (($f['type'] ?? '') === 'time') continue;
+                        $core['builder']['filters'][] = [
+                            'key' => $f['key'] ?? null,
+                            'op'  => $f['op']  ?? null,
+                            'value' => $f['value'] ?? null,
+                        ];
+                    }
+                }
+            }
+        }
+
+        // Убираем volatile-поля верхнего уровня target (если вдруг попали)
+        $this->stripVolatileFields($core, [
+            'from','to','intervalMs','maxDataPoints','requestId','refId','hide','datasourceId'
+        ]);
+
+        // Deep sort + удалить null-поля
+        $this->removeNulls($core);
+        $this->deepKsort($core);
+
+        $json = json_encode($core, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $md5 = md5($json);
+        $this->logger->debug("Normalized request core for {$metricName}: " . substr($json, 0, 500));
+        return $md5;
+    }
+
+    /**
      * Возвращает PromQL запрос (expr) для указанной метрики.
      */
     public function getQueryForMetric(string $metricName): string|false
@@ -644,14 +816,12 @@ class GrafanaProxyClient implements GrafanaClientInterface
 
         $info = $this->metricsCache[$metricName];
 
-        // Получаем JSON дашборда
-        $dashJson = $this->httpRequest('GET', "{$this->grafanaUrl}/api/dashboards/uid/{$info['dashboard_uid']}");
-        if (!$dashJson) {
+        // Получаем JSON дашборда (с in-request кэшем)
+        $dashData = $this->fetchDashboardData($info['dashboard_uid']);
+        if (!$dashData) {
             $this->logger->error("Не удалось получить JSON дашборда {$info['dashboard_uid']}");
             return false;
         }
-
-        $dashData = json_decode($dashJson, true);
         $panels = $dashData['dashboard']['panels'] ?? [];
         $targetPanel = null;
         foreach ($panels as $p) {

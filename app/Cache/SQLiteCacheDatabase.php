@@ -71,30 +71,42 @@ class SQLiteCacheDatabase
             )
         ");
         $this->db->exec("
-            CREATE TABLE IF NOT EXISTS metrics_max_periods (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                metric_key TEXT UNIQUE NOT NULL,
-                max_period_days FLOAT NOT NULL,
-                datasource_type TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ");
-        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_max_periods_key ON metrics_max_periods(metric_key)");
-        $this->db->exec("
             CREATE TABLE IF NOT EXISTS grafana_metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                metrics_key TEXT UNIQUE NOT NULL DEFAULT 'global_metrics',
-                metrics_json TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                query TEXT NOT NULL UNIQUE,
+                payload_json TEXT NOT NULL,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         ");
-        $this->db->exec("INSERT OR IGNORE INTO grafana_metrics (metrics_key, metrics_json) VALUES ('global_metrics', '{}')");
-
-        // L1 cache table for metrics
+        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_grafana_metrics_updated_at ON grafana_metrics(updated_at)");
         $this->db->exec("
-            CREATE TABLE IF NOT EXISTS metrics_cache_l1 (
+            CREATE TABLE IF NOT EXISTS metrics_max_periods (
+                metric_key TEXT PRIMARY KEY,
+                max_period_days REAL NOT NULL,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        ");
+
+        // L1 cache table for autoscale
+        $this->db->exec("
+            CREATE TABLE IF NOT EXISTS autoscale_l1 (
+                query_id INTEGER NOT NULL,
+                metric_hash TEXT NOT NULL,
+                request_md5 TEXT NOT NULL,
+                scale_corridor INTEGER NOT NULL DEFAULT 0,
+                k INTEGER NOT NULL DEFAULT 8,
+                factor REAL NULL,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (query_id, metric_hash)
+            )
+        ");
+        // Optional indices for performance
+        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_autoscale_l1_query_id ON autoscale_l1(query_id)");
+        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_autoscale_l1_request_md5 ON autoscale_l1(request_md5)");
+
+        // Permanent cache table for metrics
+        $this->db->exec("
+            CREATE TABLE IF NOT EXISTS metrics_cache_permanent (
                 query_id INTEGER NOT NULL,
                 metric_hash TEXT NOT NULL,
                 request_md5 TEXT NOT NULL,
@@ -107,8 +119,8 @@ class SQLiteCacheDatabase
             )
         ");
         // Optional indices for performance
-        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_metrics_cache_l1_query_id ON metrics_cache_l1(query_id)");
-        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_metrics_cache_l1_request_md5 ON metrics_cache_l1(request_md5)");
+        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_metrics_cache_permanent_query_id ON metrics_cache_permanent(query_id)");
+        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_metrics_cache_permanent_request_md5 ON metrics_cache_permanent(request_md5)");
 
         $this->db->exec("CREATE INDEX IF NOT EXISTS idx_queries_query ON queries(query)");
         $this->db->exec("CREATE INDEX IF NOT EXISTS idx_dft_cache_query_id ON dft_cache(query_id)");
@@ -117,12 +129,38 @@ class SQLiteCacheDatabase
 
     private function checkAndMigrateDatabase(): void
     {
+        // ensure autoscale_l1
         try {
-            $mcl1Exists = $this->db->query(\sprintf("SELECT name FROM sqlite_master WHERE type='table' AND name='metrics_cache_l1'"))->fetchColumn();
-            if (!$mcl1Exists) {
-                $this->logger->warning("Создание таблицы metrics_cache_l1.");
+            $asl1Exists = $this->db->query(\sprintf("SELECT name FROM sqlite_master WHERE type='table' AND name='autoscale_l1'"))->fetchColumn();
+            if (!$asl1Exists) {
+                $this->logger->warning("Создание таблицы autoscale_l1.");
                 $this->db->exec("
-                    CREATE TABLE IF NOT EXISTS metrics_cache_l1 (
+                    CREATE TABLE IF NOT EXISTS autoscale_l1 (
+                        query_id INTEGER NOT NULL,
+                        metric_hash TEXT NOT NULL,
+                        request_md5 TEXT NOT NULL,
+                        scale_corridor INTEGER NOT NULL DEFAULT 0,
+                        k INTEGER NOT NULL DEFAULT 8,
+                        factor REAL NULL,
+                        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (query_id, metric_hash)
+                    )
+                ");
+                $this->db->exec("CREATE INDEX IF NOT EXISTS idx_autoscale_l1_query_id ON autoscale_l1(query_id)");
+                $this->db->exec("CREATE INDEX IF NOT EXISTS idx_autoscale_l1_request_md5 ON autoscale_l1(request_md5)");
+                $this->logger->info("Таблица autoscale_l1 создана.");
+            }
+        } catch (\PDOException $e) {
+            $this->logger->error("Ошибка при создании таблицы autoscale_l1: " . $e->getMessage());
+        }
+
+        // ensure metrics_cache_permanent
+        try {
+            $mcl1Exists = $this->db->query(\sprintf("SELECT name FROM sqlite_master WHERE type='table' AND name='metrics_cache_permanent'"))->fetchColumn();
+            if (!$mcl1Exists) {
+                $this->logger->warning("Создание таблицы metrics_cache_permanent.");
+                $this->db->exec("
+                    CREATE TABLE IF NOT EXISTS metrics_cache_permanent (
                         query_id INTEGER NOT NULL,
                         metric_hash TEXT NOT NULL,
                         request_md5 TEXT NOT NULL,
@@ -134,12 +172,50 @@ class SQLiteCacheDatabase
                         PRIMARY KEY (query_id, metric_hash)
                     )
                 ");
-                $this->db->exec("CREATE INDEX IF NOT EXISTS idx_metrics_cache_l1_query_id ON metrics_cache_l1(query_id)");
-                $this->db->exec("CREATE INDEX IF NOT EXISTS idx_metrics_cache_l1_request_md5 ON metrics_cache_l1(request_md5)");
-                $this->logger->info("Таблица metrics_cache_l1 создана.");
+                $this->db->exec("CREATE INDEX IF NOT EXISTS idx_metrics_cache_permanent_query_id ON metrics_cache_permanent(query_id)");
+                $this->db->exec("CREATE INDEX IF NOT EXISTS idx_metrics_cache_permanent_request_md5 ON metrics_cache_permanent(request_md5)");
+                $this->logger->info("Таблица metrics_cache_permanent создана.");
             }
         } catch (\PDOException $e) {
-            $this->logger->error("Ошибка при создании таблицы metrics_cache_l1: " . $e->getMessage());
+            $this->logger->error("Ошибка при создании таблицы metrics_cache_permanent: " . $e->getMessage());
+        }
+
+        // ensure grafana_metrics
+        try {
+            $gmExists = $this->db->query(\sprintf("SELECT name FROM sqlite_master WHERE type='table' AND name='grafana_metrics'"))->fetchColumn();
+            if (!$gmExists) {
+                $this->logger->warning("Создание таблицы grafana_metrics.");
+                $this->db->exec("
+                    CREATE TABLE IF NOT EXISTS grafana_metrics (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        query TEXT NOT NULL UNIQUE,
+                        payload_json TEXT NOT NULL,
+                        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                ");
+                $this->db->exec("CREATE INDEX IF NOT EXISTS idx_grafana_metrics_updated_at ON grafana_metrics(updated_at)");
+                $this->logger->info("Таблица grafana_metrics создана.");
+            }
+        } catch (\PDOException $e) {
+            $this->logger->error("Ошибка при создании таблицы grafana_metrics: " . $e->getMessage());
+        }
+
+        // ensure metrics_max_periods
+        try {
+            $mmpExists = $this->db->query(\sprintf("SELECT name FROM sqlite_master WHERE type='table' AND name='metrics_max_periods'"))->fetchColumn();
+            if (!$mmpExists) {
+                $this->logger->warning("Создание таблицы metrics_max_periods.");
+                $this->db->exec("
+                    CREATE TABLE IF NOT EXISTS metrics_max_periods (
+                        metric_key TEXT PRIMARY KEY,
+                        max_period_days REAL NOT NULL,
+                        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                ");
+                $this->logger->info("Таблица metrics_max_periods создана.");
+            }
+        } catch (\PDOException $e) {
+            $this->logger->error("Ошибка при создании таблицы metrics_max_periods: " . $e->getMessage());
         }
     }
 }

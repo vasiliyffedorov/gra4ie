@@ -95,6 +95,14 @@ class CorridorBuilder
                 break;
             }
 
+            // L1 integration: check for STALE md5 mismatch
+            $requestMd5 = $this->client->getNormalizedRequestMd5($query) ?: '';
+            $l1 = $this->cacheManager->loadMetricsCacheL1($query, $labelsJson);
+            if ($l1 && $l1['request_md5'] !== $requestMd5) {
+                $needRecalc = true;
+                $this->logger->info('L1 STALE md5 mismatch for ' . $query . ': old=' . $l1['request_md5'] . ', new=' . $requestMd5 . ', forcing recalc');
+            }
+
             // пытаемся загрузить из кэша
             $cached = $this->cacheManager->loadFromCache($query, $labelsJson);
             $needRecalc = $cached === null
@@ -156,9 +164,10 @@ class CorridorBuilder
                 $stddev
             );
 
-            // аномалии
+            // аномалии (выровнять ряды по времени)
             $currStats = $this->anomalyDetector->calculateAnomalyStats(
-                $orig, $cU, $cL,
+                $this->alignByTime($orig, $cU, $cL),
+                $cU, $cL,
                 $this->config['corrdor_params']['default_percentiles'],
                 true, // raw
                 false, // not historical
@@ -223,5 +232,28 @@ class CorridorBuilder
             $this->logger->warning("Empty results for query '$query' (fetch error or no metrics), attempting to format empty/nodata response");
         }
         return $this->responseFormatter->formatForGrafana($results, $query, $showMetrics);
+    }
+
+    /**
+     * Выравнивает ряды по общим таймштампам для устранения предупреждений о длинах.
+     */
+    private function alignByTime(array $orig, array $u, array $l): array
+    {
+        $origTimes = array_column($orig, 'time');
+        $uTimes = array_column($u, 'time');
+        $lTimes = array_column($l, 'time');
+
+        $commonTimes = array_intersect($origTimes, $uTimes, $lTimes);
+        if (empty($commonTimes)) {
+            return $orig; // fallback
+        }
+
+        $aligned = [];
+        foreach ($orig as $point) {
+            if (in_array($point['time'], $commonTimes)) {
+                $aligned[] = $point;
+            }
+        }
+        return $aligned;
     }
 }

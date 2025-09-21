@@ -45,7 +45,7 @@ class LinearTrendCalculator implements TrendCalculatorInterface
         $slope = ($sumXY - $n * $meanX * $meanY) / $denominator;
         $intercept = $meanY - $slope * $meanX;
 
-        $this->logger->info("Вычислен тренд: slope=$slope, intercept=$intercept");
+        $this->logger->debug("Вычислен тренд: slope=$slope, intercept=$intercept");
         return ['slope' => $slope, 'intercept' => $intercept];
     }
 }
