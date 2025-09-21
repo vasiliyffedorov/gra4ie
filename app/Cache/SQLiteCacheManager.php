@@ -10,6 +10,7 @@ use App\Cache\SQLiteCacheIO;
 use App\Cache\SQLiteCacheMaintenance;
 use App\Cache\SQLiteCacheConfig;
 use App\Cache\GrafanaMetricsCache;
+use App\Cache\GrafanaInstanceCache;
 
 class SQLiteCacheManager implements CacheManagerInterface
 {
@@ -18,6 +19,7 @@ class SQLiteCacheManager implements CacheManagerInterface
     private SQLiteCacheMaintenance $maintenanceManager;
     private SQLiteCacheConfig $configManager;
     private GrafanaMetricsCache $grafanaMetricsCache;
+    private GrafanaInstanceCache $grafanaInstanceCache;
     private LoggerInterface $logger;
     private int $maxTtl;
     private array $config;
@@ -35,6 +37,7 @@ class SQLiteCacheManager implements CacheManagerInterface
             $this->maintenanceManager = new SQLiteCacheMaintenance($this->dbManager, $logger);
             $this->configManager = new SQLiteCacheConfig($logger);
             $this->grafanaMetricsCache = new GrafanaMetricsCache($this->dbManager, $logger);
+            $this->grafanaInstanceCache = new GrafanaInstanceCache($this->dbManager, $logger);
         } catch (Exception $e) {
             $this->logger->error("Ошибка инициализации SQLiteCacheManager: " . $e->getMessage());
             throw new Exception("Не удалось инициализировать кэш SQLite");
@@ -151,6 +154,57 @@ class SQLiteCacheManager implements CacheManagerInterface
         } catch (\PDOException $e) {
             $this->logger->error("Ошибка очистки уровня 2 кэша: " . $e->getMessage());
         }
+    }
+
+    // Grafana Instance Cache methods
+    public function saveGrafanaInstance(array $instance): bool
+    {
+        return $this->grafanaInstanceCache->saveInstance($instance);
+    }
+
+    public function loadGrafanaInstances(): array
+    {
+        return $this->grafanaInstanceCache->loadInstances();
+    }
+
+    public function grafanaInstanceExistsByUrl(string $url): bool
+    {
+        return $this->grafanaInstanceCache->instanceExistsByUrl($url);
+    }
+
+    public function grafanaInstanceExistsById(int $id): bool
+    {
+        return $this->grafanaInstanceCache->instanceExistsById($id);
+    }
+
+    public function getGrafanaInstanceIdByUrl(string $url): ?int
+    {
+        $db = $this->dbManager->getDb();
+        try {
+            $stmt = $db->prepare("SELECT id FROM grafana_instances WHERE url = :url LIMIT 1");
+            $stmt->execute([':url' => $url]);
+            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+            return $row ? (int)$row['id'] : null;
+        } catch (\PDOException $e) {
+            $this->logger->error("Ошибка получения ID экземпляра по URL: " . $e->getMessage());
+            return null;
+        }
+    }
+
+    // Grafana individual metrics cache
+    public function saveGrafanaIndividualMetric(int $instanceId, string $metricKey, array $metricData): bool
+    {
+        return $this->grafanaMetricsCache->saveMetric($instanceId, $metricKey, $metricData);
+    }
+
+    public function loadGrafanaIndividualMetrics(int $instanceId): array
+    {
+        return $this->grafanaMetricsCache->loadMetrics($instanceId);
+    }
+
+    public function updateGrafanaIndividualMetrics(int $instanceId, array $metrics): bool
+    {
+        return $this->grafanaMetricsCache->updateMetricsCache($instanceId, $metrics);
     }
 }
 ?>

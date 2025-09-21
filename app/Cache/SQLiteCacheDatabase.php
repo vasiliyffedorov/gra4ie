@@ -71,6 +71,19 @@ class SQLiteCacheDatabase
             )
         ");
         $this->db->exec("
+            CREATE TABLE IF NOT EXISTS grafana_individual_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                instance_id INTEGER NOT NULL,
+                metric_key TEXT NOT NULL,
+                metric_json TEXT NOT NULL,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (instance_id) REFERENCES grafana_instances(id),
+                UNIQUE(instance_id, metric_key)
+            )
+        ");
+        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_grafana_individual_metrics_instance_id ON grafana_individual_metrics(instance_id)");
+        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_grafana_individual_metrics_last_updated ON grafana_individual_metrics(last_updated)");
+        $this->db->exec("
             CREATE TABLE IF NOT EXISTS grafana_metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 query TEXT NOT NULL UNIQUE,
@@ -105,6 +118,17 @@ class SQLiteCacheDatabase
         // Optional indices for performance
         $this->db->exec("CREATE INDEX IF NOT EXISTS idx_metrics_cache_permanent_query_id ON metrics_cache_permanent(query_id)");
         $this->db->exec("CREATE INDEX IF NOT EXISTS idx_metrics_cache_permanent_request_md5 ON metrics_cache_permanent(request_md5)");
+
+        $this->db->exec("
+            CREATE TABLE IF NOT EXISTS grafana_instances (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                url TEXT NOT NULL,
+                token TEXT NOT NULL,
+                blacklist_uids TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ");
 
         $this->db->exec("CREATE INDEX IF NOT EXISTS idx_queries_query ON queries(query)");
         $this->db->exec("CREATE INDEX IF NOT EXISTS idx_dft_cache_query_id ON dft_cache(query_id)");
@@ -151,7 +175,7 @@ class SQLiteCacheDatabase
             $this->logger->error("Ошибка при создании таблицы metrics_cache_permanent: " . $e->getMessage());
         }
 
-        // ensure grafana_metrics
+        // ensure grafana_metrics (for dashboard metrics)
         try {
             $gmExists = $this->db->query(\sprintf("SELECT name FROM sqlite_master WHERE type='table' AND name='grafana_metrics'"))->fetchColumn();
             if (!$gmExists) {
@@ -171,6 +195,30 @@ class SQLiteCacheDatabase
             $this->logger->error("Ошибка при создании таблицы grafana_metrics: " . $e->getMessage());
         }
 
+        // ensure grafana_individual_metrics (for individual metrics with instance_id)
+        try {
+            $gimExists = $this->db->query(\sprintf("SELECT name FROM sqlite_master WHERE type='table' AND name='grafana_individual_metrics'"))->fetchColumn();
+            if (!$gimExists) {
+                $this->logger->warning("Создание таблицы grafana_individual_metrics.");
+                $this->db->exec("
+                    CREATE TABLE IF NOT EXISTS grafana_individual_metrics (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        instance_id INTEGER NOT NULL,
+                        metric_key TEXT NOT NULL,
+                        metric_json TEXT NOT NULL,
+                        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (instance_id) REFERENCES grafana_instances(id),
+                        UNIQUE(instance_id, metric_key)
+                    )
+                ");
+                $this->db->exec("CREATE INDEX IF NOT EXISTS idx_grafana_individual_metrics_instance_id ON grafana_individual_metrics(instance_id)");
+                $this->db->exec("CREATE INDEX IF NOT EXISTS idx_grafana_individual_metrics_last_updated ON grafana_individual_metrics(last_updated)");
+                $this->logger->info("Таблица grafana_individual_metrics создана.");
+            }
+        } catch (\PDOException $e) {
+            $this->logger->error("Ошибка при создании таблицы grafana_individual_metrics: " . $e->getMessage());
+        }
+
         // ensure metrics_max_periods
         try {
             $mmpExists = $this->db->query(\sprintf("SELECT name FROM sqlite_master WHERE type='table' AND name='metrics_max_periods'"))->fetchColumn();
@@ -187,6 +235,52 @@ class SQLiteCacheDatabase
             }
         } catch (\PDOException $e) {
             $this->logger->error("Ошибка при создании таблицы metrics_max_periods: " . $e->getMessage());
+        }
+
+        // ensure grafana_instances
+        try {
+            $giExists = $this->db->query(\sprintf("SELECT name FROM sqlite_master WHERE type='table' AND name='grafana_instances'"))->fetchColumn();
+            if (!$giExists) {
+                $this->logger->warning("Создание таблицы grafana_instances.");
+                $this->db->exec("
+                    CREATE TABLE IF NOT EXISTS grafana_instances (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        url TEXT NOT NULL,
+                        token TEXT NOT NULL,
+                        blacklist_uids TEXT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ");
+                $this->logger->info("Таблица grafana_instances создана.");
+            } else {
+                // Check if migration needed (old structure: grafana_url, name, token, blacklist)
+                $columns = $this->db->query("PRAGMA table_info(grafana_instances)")->fetchAll(\PDO::FETCH_ASSOC);
+                $columnNames = array_column($columns, 'name');
+                if (in_array('grafana_url', $columnNames) && !in_array('url', $columnNames)) {
+                    $this->logger->warning("Миграция таблицы grafana_instances.");
+                    // Rename table, create new, copy data, drop old
+                    $this->db->exec("ALTER TABLE grafana_instances RENAME TO grafana_instances_old");
+                    $this->db->exec("
+                        CREATE TABLE grafana_instances (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            name TEXT NOT NULL,
+                            url TEXT NOT NULL,
+                            token TEXT NOT NULL,
+                            blacklist_uids TEXT,
+                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                        )
+                    ");
+                    $this->db->exec("
+                        INSERT INTO grafana_instances (id, name, url, token, blacklist_uids, created_at)
+                        SELECT id, name, grafana_url, token, blacklist, CURRENT_TIMESTAMP FROM grafana_instances_old
+                    ");
+                    $this->db->exec("DROP TABLE grafana_instances_old");
+                    $this->logger->info("Таблица grafana_instances мигрирована.");
+                }
+            }
+        } catch (\PDOException $e) {
+            $this->logger->error("Ошибка при создании/миграции таблицы grafana_instances: " . $e->getMessage());
         }
     }
 }

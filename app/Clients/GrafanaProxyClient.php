@@ -18,21 +18,21 @@ class GrafanaProxyClient implements GrafanaClientInterface
     private array $blacklistDatasourceIds; // New property for blacklisted datasource IDs
     private CacheManagerInterface $cacheManager;
     private array $dashCache = [];
+    private int $instanceId;
 
     /** тип последнего datasource, на который сделали queryRange */
     private string $lastDataSourceType = 'unknown';
 
     public function __construct(
-        string $grafanaUrl,
-        string $apiToken,
+        array $instance,
         LoggerInterface $logger,
-        array $blacklistDatasourceIds = [],
         ?CacheManagerInterface $cacheManager = null
     ) {
-        $this->grafanaUrl = rtrim($grafanaUrl, '/');
-        $this->apiToken   = $apiToken;
+        $this->instanceId = $instance['id'];
+        $this->grafanaUrl = rtrim($instance['url'], '/');
+        $this->apiToken   = $instance['token'];
         $this->logger     = $logger;
-        $this->blacklistDatasourceIds = $blacklistDatasourceIds; // Initialize blacklist
+        $this->blacklistDatasourceIds = $instance['blacklist_uids'] ?? []; // Initialize blacklist
         $this->cacheManager = $cacheManager;
         $this->headers    = [
             "Authorization: Bearer {$this->apiToken}",
@@ -152,13 +152,16 @@ class GrafanaProxyClient implements GrafanaClientInterface
      */
     private function loadMetricsCache(): void
     {
-        $cached = $this->cacheManager->loadGrafanaMetrics();
-        if ($cached !== null) {
-            $this->metricsCache = $cached;
-            $this->logger->info("Кэш метрик Grafana загружен: " . implode(', ', array_keys($this->metricsCache)));
+        $cached = $this->cacheManager->loadGrafanaIndividualMetrics($this->instanceId);
+        if (!empty($cached)) {
+            $this->metricsCache = [];
+            foreach ($cached as $metric) {
+                $this->metricsCache[$metric['metric_key']] = $metric['metric_data'];
+            }
+            $this->logger->info("Кэш метрик Grafana загружен для instance {$this->instanceId}: " . implode(', ', array_keys($this->metricsCache)));
         } else {
             $this->metricsCache = [];
-            $this->logger->warning("Кэш метрик Grafana не найден, метрики будут пустыми до обновления");
+            $this->logger->warning("Кэш метрик Grafana не найден для instance {$this->instanceId}, метрики будут пустыми до обновления");
         }
     }
 
@@ -173,10 +176,17 @@ class GrafanaProxyClient implements GrafanaClientInterface
     public function updateMetricsCache(): void
     {
         $this->initMetricsCache();
-        if ($this->cacheManager->saveGrafanaMetrics($this->metricsCache)) {
-            $this->logger->info("Кэш метрик Grafana обновлен и сохранен: " . implode(', ', array_keys($this->metricsCache)));
+        $metrics = [];
+        foreach ($this->metricsCache as $key => $data) {
+            $metrics[] = [
+                'metric_key' => $key,
+                'metric_data' => $data
+            ];
+        }
+        if ($this->cacheManager->updateGrafanaIndividualMetrics($this->instanceId, $metrics)) {
+            $this->logger->info("Кэш метрик Grafana обновлен и сохранен для instance {$this->instanceId}: " . implode(', ', array_keys($this->metricsCache)));
         } else {
-            $this->logger->error("Ошибка сохранения кэша метрик Grafana после обновления");
+            $this->logger->error("Ошибка сохранения кэша метрик Grafana после обновления для instance {$this->instanceId}");
         }
     }
 

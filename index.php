@@ -117,7 +117,56 @@ $logger = $container->get(\App\Interfaces\LoggerInterface::class);
 if (empty($config['grafana_api_token'])) {
     $logger->warning('GRAFANA_API_TOKEN is empty after INI and ENV overrides. Set ENV GRAFANA_API_TOKEN to avoid auth failures.');
 }
-$proxy = $container->get(\App\Interfaces\GrafanaClientInterface::class);
+$cacheManager = $container->get(\App\Interfaces\CacheManagerInterface::class);
+
+function extractGrafanaInstanceData(\App\Interfaces\CacheManagerInterface $cacheManager, \App\Interfaces\LoggerInterface $logger): ?array {
+    $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
+    if (empty($authHeader) || !preg_match('/^Basic\s+(.+)$/', $authHeader, $matches)) {
+        $logger->info('Authorization header missing or not Basic');
+        return null;
+    }
+
+    $credentials = base64_decode($matches[1]);
+    if (!$credentials || !str_contains($credentials, ':')) {
+        $logger->error('Invalid Basic auth credentials');
+        return null;
+    }
+
+    list($login, $token) = explode(':', $credentials, 2);
+    $remoteAddr = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
+    $url = "http://{$remoteAddr}:{$login}";
+
+    $datasourceUid = $_SERVER['HTTP_X_DATASOURCE_UID'] ?? '';
+    $blacklistUids = $datasourceUid ? [$datasourceUid] : [];
+
+    $instance = [
+        'name' => $login,
+        'url' => $url,
+        'token' => $token,
+        'blacklist_uids' => $blacklistUids
+    ];
+
+    if (!$cacheManager->grafanaInstanceExistsByUrl($url)) {
+        $saved = $cacheManager->saveGrafanaInstance($instance);
+        if ($saved) {
+            $logger->info("New Grafana instance saved: {$url}");
+        } else {
+            $logger->error("Failed to save Grafana instance: {$url}");
+            return null;
+        }
+    } else {
+        $logger->info("Grafana instance already exists: {$url}");
+    }
+
+    $id = $cacheManager->getGrafanaInstanceIdByUrl($url);
+    if ($id === null) {
+        $logger->error("Failed to get ID for Grafana instance: {$url}");
+        return null;
+    }
+
+    $instance['id'] = $id;
+    return $instance;
+}
 
 $directories = [
     __DIR__ . '/logs',
@@ -134,10 +183,22 @@ foreach ($directories as $dir) {
     }
 }
 
+// Извлечение данных Grafana instance
+$currentInstance = extractGrafanaInstanceData($cacheManager, $logger);
+if ($currentInstance === null) {
+    jsonError('Unauthorized', 401);
+}
+
+// Создание GrafanaProxyClient с instance
+$proxy = new \App\Clients\GrafanaProxyClient($currentInstance, $logger, $cacheManager);
+
+// Регистрация proxy в container для CorridorBuilder
+$container->set(\App\Interfaces\GrafanaClientInterface::class, $proxy);
+
 // Автоматическое обновление кэша дашбордов, если пустой
 if (empty($proxy->getMetricNames())) {
     $logger->info("Кэш дашбордов пустой, автоматически обновляем...");
-    shell_exec('php ' . __DIR__ . '/bin/update_dashboards_cache.php');
+    shell_exec('php ' . __DIR__ . '/bin/update_dashboards_cache.php ' . $currentInstance['id']);
     $proxy->reloadMetricsCache();
     $logger->info("Кэш дашбордов обновлён автоматически.");
 }
@@ -178,6 +239,28 @@ if ($method==='GET' && $path==='/api/v1/metadata') {
 // GET /api/v1/label/__name__/values
 if ($method==='GET' && $path==='/api/v1/label/__name__/values') {
     jsonSuccess($proxy->getMetricNames());
+    exit;
+}
+
+// GET /api/v1/status/buildinfo
+if ($method==='GET' && $path==='/api/v1/status/buildinfo') {
+    jsonSuccess([
+        'status' => 'success',
+        'data' => [
+            'version' => '2.0.0',
+            'revision' => 'unknown',
+            'branch' => 'unknown',
+            'buildUser' => 'unknown',
+            'buildDate' => 'unknown',
+            'goVersion' => 'unknown'
+        ]
+    ]);
+    exit;
+}
+
+// POST /api/v1/query
+if ($method==='POST' && $path==='/api/v1/query') {
+    jsonSuccess(['resultType' => 'vector', 'result' => []]);
     exit;
 }
 

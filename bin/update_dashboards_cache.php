@@ -67,10 +67,35 @@ foreach ($requiredKeys as $key) {
 }
 
 $container = new Container($config);
-$proxy = $container->get(GrafanaClientInterface::class);
+$cacheManager = $container->get(\App\Interfaces\CacheManagerInterface::class);
 $logger = $container->get(\App\Interfaces\LoggerInterface::class);
 
-$logger->info("Обновление кэша метрик Grafana");
+// Получить instance_id из аргументов командной строки
+$instanceId = $argv[1] ?? null;
+if (!$instanceId || !is_numeric($instanceId)) {
+    $logger->error("Не указан или неверный instance_id. Использование: php update_dashboards_cache.php <instance_id>");
+    exit(1);
+}
+$instanceId = (int)$instanceId;
+
+// Получить instance данные
+$instances = $cacheManager->loadGrafanaInstances();
+$instance = null;
+foreach ($instances as $inst) {
+    if ($inst['id'] == $instanceId) {
+        $instance = $inst;
+        break;
+    }
+}
+if (!$instance) {
+    $logger->error("Instance с id $instanceId не найден");
+    exit(1);
+}
+
+// Создать proxy с instance
+$proxy = new \App\Clients\GrafanaProxyClient($instance, $logger, $cacheManager);
+
+$logger->info("Обновление кэша метрик Grafana для instance $instanceId");
 $proxy->updateMetricsCache();
-$logger->info("Кэш метрик Grafana обновлён");
+$logger->info("Кэш метрик Grafana обновлён для instance $instanceId");
 ?>

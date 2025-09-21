@@ -48,19 +48,19 @@ class Container
             return CacheManagerFactory::create($this->config, $logger);
         };
 
-        // GrafanaClient
-        $this->services[GrafanaClientInterface::class] = function () {
-            $logger = $this->get(LoggerInterface::class);
-            $cacheManager = $this->get(CacheManagerInterface::class);
-            $blacklist = $this->config['blacklist_datasource_ids'] ?? [];
-            return new GrafanaProxyClient(
-                $this->config['grafana_url'],
-                $this->config['grafana_api_token'],
-                $logger,
-                $blacklist,
-                $cacheManager
-            );
-        };
+        // GrafanaClient - now created dynamically in index.php
+        // $this->services[GrafanaClientInterface::class] = function () {
+        //     $logger = $this->get(LoggerInterface::class);
+        //     $cacheManager = $this->get(CacheManagerInterface::class);
+        //     $blacklist = $this->config['blacklist_datasource_ids'] ?? [];
+        //     return new GrafanaProxyClient(
+        //         $this->config['grafana_url'],
+        //         $this->config['grafana_api_token'],
+        //         $logger,
+        //         $blacklist,
+        //         $cacheManager
+        //     );
+        // };
 
         // FourierTransformer
         $this->services[FourierTransformer::class] = function () {
@@ -181,5 +181,10 @@ class Container
     public function has(string $id): bool
     {
         return isset($this->services[$id]) || isset($this->instances[$id]);
+    }
+
+    public function set(string $id, $service): void
+    {
+        $this->instances[$id] = $service;
     }
 }

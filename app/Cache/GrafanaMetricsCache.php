@@ -17,45 +17,83 @@ class GrafanaMetricsCache
         $this->logger = $logger;
     }
 
-    public function saveMetrics(array $metrics): bool
+    public function saveMetric(int $instanceId, string $metricKey, array $metricData): bool
     {
         $db = $this->dbManager->getDb();
         try {
-            $json = json_encode($metrics, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $metricJson = json_encode($metricData, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
             $stmt = $db->prepare("
-                INSERT INTO grafana_metrics (metrics_key, metrics_json, last_updated)
-                VALUES ('global_metrics', :json, CURRENT_TIMESTAMP)
-                ON CONFLICT(metrics_key) DO UPDATE SET
-                    metrics_json = :json,
-                    last_updated = CURRENT_TIMESTAMP
+                INSERT OR REPLACE INTO grafana_individual_metrics (instance_id, metric_key, metric_json, last_updated)
+                VALUES (:instance_id, :metric_key, :metric_json, CURRENT_TIMESTAMP)
             ");
-            $stmt->execute([':json' => $json]);
-            $this->logger->info("Кэш метрик Grafana сохранен в БД");
+            $stmt->execute([
+                ':instance_id' => $instanceId,
+                ':metric_key' => $metricKey,
+                ':metric_json' => $metricJson
+            ]);
+            $this->logger->info("Метрика $metricKey для instance $instanceId сохранена в БД");
             return true;
         } catch (PDOException $e) {
-            $this->logger->error("Ошибка сохранения кэша метрик Grafana: " . $e->getMessage());
+            $this->logger->error("Ошибка сохранения метрики $metricKey для instance $instanceId: " . $e->getMessage());
             return false;
         }
     }
 
-    public function loadMetrics(): ?array
+    public function loadMetrics(int $instanceId): array
     {
         $db = $this->dbManager->getDb();
         try {
-            $stmt = $db->prepare("SELECT metrics_json FROM grafana_metrics WHERE metrics_key = 'global_metrics'");
-            $stmt->execute();
-            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
-            if ($row) {
-                $metrics = json_decode($row['metrics_json'], true);
+            $stmt = $db->prepare("SELECT instance_id, metric_key, metric_json FROM grafana_individual_metrics WHERE instance_id = :instance_id ORDER BY last_updated DESC");
+            $stmt->execute([':instance_id' => $instanceId]);
+            $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+            $metrics = [];
+            foreach ($rows as $row) {
+                $metricData = json_decode($row['metric_json'], true);
                 if (json_last_error() === JSON_ERROR_NONE) {
-                    $this->logger->info("Кэш метрик Grafana загружен из БД");
-                    return $metrics;
+                    $metrics[] = [
+                        'instance_id' => (int)$row['instance_id'],
+                        'metric_key' => $row['metric_key'],
+                        'metric_data' => $metricData
+                    ];
                 }
             }
-            return null;
+            $this->logger->info("Кэш метрик для instance $instanceId загружен из БД");
+            return $metrics;
         } catch (PDOException $e) {
-            $this->logger->error("Ошибка загрузки кэша метрик Grafana: " . $e->getMessage());
-            return null;
+            $this->logger->error("Ошибка загрузки кэша метрик для instance $instanceId: " . $e->getMessage());
+            return [];
+        }
+    }
+
+    public function updateMetricsCache(int $instanceId, array $metrics): bool
+    {
+        $db = $this->dbManager->getDb();
+        try {
+            $db->beginTransaction();
+            // Delete old metrics for this instance
+            $stmt = $db->prepare("DELETE FROM grafana_individual_metrics WHERE instance_id = :instance_id");
+            $stmt->execute([':instance_id' => $instanceId]);
+            // Insert new metrics
+            foreach ($metrics as $metric) {
+                $metricKey = $metric['metric_key'];
+                $metricJson = json_encode($metric['metric_data'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                $stmt = $db->prepare("
+                    INSERT INTO grafana_individual_metrics (instance_id, metric_key, metric_json, last_updated)
+                    VALUES (:instance_id, :metric_key, :metric_json, CURRENT_TIMESTAMP)
+                ");
+                $stmt->execute([
+                    ':instance_id' => $instanceId,
+                    ':metric_key' => $metricKey,
+                    ':metric_json' => $metricJson
+                ]);
+            }
+            $db->commit();
+            $this->logger->info("Кэш метрик для instance $instanceId обновлен в БД");
+            return true;
+        } catch (PDOException $e) {
+            $db->rollBack();
+            $this->logger->error("Ошибка обновления кэша метрик для instance $instanceId: " . $e->getMessage());
+            return false;
         }
     }
 }

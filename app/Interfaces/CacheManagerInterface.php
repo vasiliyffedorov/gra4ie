@@ -24,4 +24,14 @@ interface CacheManagerInterface
     public function saveMetricsCacheL1(string $query, string $labelsJson, array $info): bool;
 
     public function loadMetricsCacheL1(string $query, string $labelsJson): ?array;
+
+    // Grafana individual metrics cache
+    public function saveGrafanaIndividualMetric(int $instanceId, string $metricKey, array $metricData): bool;
+
+    public function loadGrafanaIndividualMetrics(int $instanceId): array;
+
+    public function updateGrafanaIndividualMetrics(int $instanceId, array $metrics): bool;
+
+    // Grafana instances
+    public function getGrafanaInstanceIdByUrl(string $url): ?int;
 }
