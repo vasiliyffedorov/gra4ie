@@ -87,22 +87,6 @@ class SQLiteCacheDatabase
             )
         ");
 
-        // L1 cache table for autoscale
-        $this->db->exec("
-            CREATE TABLE IF NOT EXISTS autoscale_l1 (
-                query_id INTEGER NOT NULL,
-                metric_hash TEXT NOT NULL,
-                request_md5 TEXT NOT NULL,
-                scale_corridor INTEGER NOT NULL DEFAULT 0,
-                k INTEGER NOT NULL DEFAULT 8,
-                factor REAL NULL,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (query_id, metric_hash)
-            )
-        ");
-        // Optional indices for performance
-        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_autoscale_l1_query_id ON autoscale_l1(query_id)");
-        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_autoscale_l1_request_md5 ON autoscale_l1(request_md5)");
 
         // Permanent cache table for metrics
         $this->db->exec("
@@ -129,29 +113,16 @@ class SQLiteCacheDatabase
 
     private function checkAndMigrateDatabase(): void
     {
-        // ensure autoscale_l1
+        // remove deprecated autoscale_l1 table if exists
         try {
-            $asl1Exists = $this->db->query(\sprintf("SELECT name FROM sqlite_master WHERE type='table' AND name='autoscale_l1'"))->fetchColumn();
-            if (!$asl1Exists) {
-                $this->logger->warning("Создание таблицы autoscale_l1.");
-                $this->db->exec("
-                    CREATE TABLE IF NOT EXISTS autoscale_l1 (
-                        query_id INTEGER NOT NULL,
-                        metric_hash TEXT NOT NULL,
-                        request_md5 TEXT NOT NULL,
-                        scale_corridor INTEGER NOT NULL DEFAULT 0,
-                        k INTEGER NOT NULL DEFAULT 8,
-                        factor REAL NULL,
-                        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        PRIMARY KEY (query_id, metric_hash)
-                    )
-                ");
-                $this->db->exec("CREATE INDEX IF NOT EXISTS idx_autoscale_l1_query_id ON autoscale_l1(query_id)");
-                $this->db->exec("CREATE INDEX IF NOT EXISTS idx_autoscale_l1_request_md5 ON autoscale_l1(request_md5)");
-                $this->logger->info("Таблица autoscale_l1 создана.");
+            $autoscaleL1Exists = $this->db->query(\sprintf("SELECT name FROM sqlite_master WHERE type='table' AND name='autoscale_l1'"))->fetchColumn();
+            if ($autoscaleL1Exists) {
+                $this->logger->info("Удаление устаревшей таблицы autoscale_l1.");
+                $this->db->exec("DROP TABLE IF EXISTS autoscale_l1");
+                $this->logger->info("Таблица autoscale_l1 удалена.");
             }
         } catch (\PDOException $e) {
-            $this->logger->error("Ошибка при создании таблицы autoscale_l1: " . $e->getMessage());
+            $this->logger->error("Ошибка при удалении таблицы autoscale_l1: " . $e->getMessage());
         }
 
         // ensure metrics_cache_permanent
