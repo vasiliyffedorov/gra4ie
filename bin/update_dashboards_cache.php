@@ -59,7 +59,7 @@ function nest(array $flatEntries): array {
 $config = nest($flatIni);
 
 // Валидация
-$requiredKeys = ['grafana_url', 'grafana_api_token', 'log_file'];
+$requiredKeys = ['log_file'];
 foreach ($requiredKeys as $key) {
     if (!isset($config[$key])) {
         throw new Exception("Missing required config key: $key");

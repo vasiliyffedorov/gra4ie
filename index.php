@@ -94,7 +94,7 @@ function nest(array $flatEntries): array {
 
 $config = nest($flatIni);
 
-// ENV override (GRAFANA_URL / GRAFANA_API_TOKEN имеют приоритет над INI)
+// ENV override (для совместимости, но параметры устарели)
 $envUrl = getenv('GRAFANA_URL');
 if ($envUrl !== false && $envUrl !== '') {
     $config['grafana_url'] = $envUrl;
@@ -105,7 +105,7 @@ if ($envToken !== false && $envToken !== '') {
 }
 
 // Валидация конфига
-$requiredKeys = ['grafana_url', 'grafana_api_token', 'log_file'];
+$requiredKeys = ['log_file'];
 foreach ($requiredKeys as $key) {
     if (!isset($config[$key])) {
         jsonError("Missing required config key: $key", 500);
@@ -114,9 +114,6 @@ foreach ($requiredKeys as $key) {
 
 $container = new \App\DI\Container($config);
 $logger = $container->get(\App\Interfaces\LoggerInterface::class);
-if (empty($config['grafana_api_token'])) {
-    $logger->warning('GRAFANA_API_TOKEN is empty after INI and ENV overrides. Set ENV GRAFANA_API_TOKEN to avoid auth failures.');
-}
 $cacheManager = $container->get(\App\Interfaces\CacheManagerInterface::class);
 
 function extractGrafanaInstanceData(\App\Interfaces\CacheManagerInterface $cacheManager, \App\Interfaces\LoggerInterface $logger): ?array {
@@ -146,16 +143,16 @@ function extractGrafanaInstanceData(\App\Interfaces\CacheManagerInterface $cache
         'blacklist_uids' => $blacklistUids
     ];
 
-    if (!$cacheManager->grafanaInstanceExistsByUrl($url)) {
-        $saved = $cacheManager->saveGrafanaInstance($instance);
-        if ($saved) {
-            $logger->info("New Grafana instance saved: {$url}");
+    $saved = $cacheManager->saveGrafanaInstance($instance);
+    if ($saved) {
+        if ($cacheManager->grafanaInstanceExistsByUrl($url)) {
+            $logger->info("Grafana instance updated: {$url}");
         } else {
-            $logger->error("Failed to save Grafana instance: {$url}");
-            return null;
+            $logger->info("New Grafana instance saved: {$url}");
         }
     } else {
-        $logger->info("Grafana instance already exists: {$url}");
+        $logger->error("Failed to save/update Grafana instance: {$url}");
+        return null;
     }
 
     $id = $cacheManager->getGrafanaInstanceIdByUrl($url);

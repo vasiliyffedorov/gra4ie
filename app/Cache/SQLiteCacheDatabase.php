@@ -123,7 +123,7 @@ class SQLiteCacheDatabase
             CREATE TABLE IF NOT EXISTS grafana_instances (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
-                url TEXT NOT NULL,
+                url TEXT NOT NULL UNIQUE,
                 token TEXT NOT NULL,
                 blacklist_uids TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -265,7 +265,7 @@ class SQLiteCacheDatabase
                         CREATE TABLE grafana_instances (
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
                             name TEXT NOT NULL,
-                            url TEXT NOT NULL,
+                            url TEXT NOT NULL UNIQUE,
                             token TEXT NOT NULL,
                             blacklist_uids TEXT,
                             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -277,6 +277,24 @@ class SQLiteCacheDatabase
                     ");
                     $this->db->exec("DROP TABLE grafana_instances_old");
                     $this->logger->info("Таблица grafana_instances мигрирована.");
+                } else {
+                    // Check if UNIQUE on url is missing
+                    $indexes = $this->db->query("PRAGMA index_list(grafana_instances)")->fetchAll(\PDO::FETCH_ASSOC);
+                    $hasUniqueUrl = false;
+                    foreach ($indexes as $index) {
+                        if ($index['unique'] == 1) {
+                            $indexInfo = $this->db->query("PRAGMA index_info({$index['name']})")->fetchAll(\PDO::FETCH_ASSOC);
+                            if (count($indexInfo) == 1 && $indexInfo[0]['name'] == 'url') {
+                                $hasUniqueUrl = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!$hasUniqueUrl) {
+                        $this->logger->warning("Добавление UNIQUE на url в grafana_instances.");
+                        $this->db->exec("CREATE UNIQUE INDEX idx_grafana_instances_url ON grafana_instances(url)");
+                        $this->logger->info("UNIQUE индекс на url добавлен.");
+                    }
                 }
             }
         } catch (\PDOException $e) {

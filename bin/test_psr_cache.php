@@ -15,9 +15,6 @@ $config = [
     ],
     'log_level' => 'INFO',
     'log_file' => __DIR__ . '/../logs/app.log',
-    'grafana_url' => 'http://localhost:3000',
-    'grafana_api_token' => 'test_token',
-    'blacklist_datasource_ids' => [],
 ];
 
 $container = new Container($config);

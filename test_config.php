@@ -45,7 +45,7 @@ $config = nest($flatIni);
 
 // Валидация ключевых полей (из index.php)
 // Проверка required keys как в index.php (top-level без точки)
-$requiredKeys = ['grafana_url', 'grafana_api_token', 'log_file'];
+$requiredKeys = ['log_file'];
 foreach ($requiredKeys as $key) {
     if (!isset($config[$key])) {
         die("Отсутствует ключ: $key\n");
@@ -55,8 +55,6 @@ foreach ($requiredKeys as $key) {
 // Выводим структуру (сокращенную для читаемости)
 echo "Конфиг парсится успешно!\n";
 echo "Пример структуры:\n";
-echo "- grafana_url: " . var_export($config['grafana_url'] ?? 'N/A', true) . "\n";
-echo "- grafana_api_token: " . var_export(substr($config['grafana_api_token'] ?? '', 0, 10) . '...', true) . "\n"; // Частично для безопасности
 echo "- log_level: " . var_export($config['log_level'] ?? 'N/A', true) . "\n";
 echo "- log_file: " . var_export($config['log_file'] ?? 'N/A', true) . "\n";
 echo "- corridor.type: " . var_export($config['corridor']['type'] ?? 'N/A', true) . "\n";
