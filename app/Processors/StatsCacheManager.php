@@ -108,9 +108,17 @@ class StatsCacheManager {
         // Fetch history if empty or insufficient
         if (empty($historyData)) {
             $metricKey = $query . '|' . $labelsJson;
-            $maxPeriodDays = $this->cacheManager->loadMaxPeriod($metricKey);
-            if ($maxPeriodDays === null) {
-                $maxPeriodDays = $this->optimizer->determineMaxPeriod($query, $labelsJson, $currentConfig['corrdor_params']['step']);
+            // Check permanent cache for optimal period first
+            $l1Data = $this->cacheManager->loadMetricsCacheL1($query, $labelsJson);
+            $optimalPeriodDays = $l1Data['optimal_period_days'] ?? null;
+            $this->logger->info("Checked permanent cache for $metricKey: optimal_period_days=" . ($optimalPeriodDays ?? 'null'));
+
+            if ($optimalPeriodDays !== null) {
+                $maxPeriodDays = $optimalPeriodDays;
+                $this->logger->info("Using optimal period from permanent cache for $metricKey: $maxPeriodDays days");
+            } else {
+                $maxPeriodDays = 12; // Default to 12 days if permanent cache is empty
+                $this->logger->info("Permanent cache empty for $metricKey, using default period: $maxPeriodDays days");
             }
             $periodSec = (int)($maxPeriodDays * 86400);
             $histEnd = time();
