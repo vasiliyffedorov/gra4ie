@@ -85,15 +85,17 @@ class DFTProcessor implements DFTProcessorInterface {
 
     private function calculateLinearTrend(array $values, array $times): array {
         $n = count($values);
-        if ($n < 2) {
+        if ($n < 1) {
             $this->logger->warning("Недостаточно данных для вычисления тренда: $n точек");
-            return ['slope' => 0, 'intercept' => $values[0] ?? 0];
+            return ['slope' => 0, 'intercept' => 0];
+        }
+        if ($n == 1) {
+            $this->logger->warning("Одна точка данных, тренд - горизонтальная линия на уровне значения");
+            return ['slope' => 0, 'intercept' => $values[0]];
         }
 
         try {
-            // Вычисляем линейную регрессию по всем точкам
-            $sumX = array_sum($times);
-            $sumY = array_sum($values);
+            // Вычисляем линейную регрессию без intercept (intercept = 0)
             $sumXY = 0;
             $sumXX = 0;
 
@@ -102,23 +104,19 @@ class DFTProcessor implements DFTProcessorInterface {
                 $sumXX += $times[$i] * $times[$i];
             }
 
-            $meanX = $sumX / $n;
-            $meanY = $sumY / $n;
-            $denominator = $sumXX - $n * $meanX * $meanX;
-
-            if (abs($denominator) < 1e-10) {
+            if (abs($sumXX) < 1e-10) {
                 $this->logger->warning("Нулевой или почти нулевой знаменатель при вычислении тренда");
-                return ['slope' => 0, 'intercept' => $meanY];
+                return ['slope' => 0, 'intercept' => 0];
             }
 
-            $slope = ($sumXY - $n * $meanX * $meanY) / $denominator;
-            $intercept = $meanY - $slope * $meanX;
+            $slope = $sumXY / $sumXX;
+            $intercept = 0;
 
             $this->logger->debug("Вычислен тренд: slope=$slope, intercept=$intercept");
             return ['slope' => $slope, 'intercept' => $intercept];
         } catch (\Throwable $e) {
             $this->logger->error("Error calculating linear trend: " . $e->getMessage(), __FILE__, __LINE__);
-            return ['slope' => 0, 'intercept' => array_sum($values) / $n];
+            return ['slope' => 0, 'intercept' => 0];
         }
     }
 

@@ -354,6 +354,11 @@ class StatsCacheManager {
         );
         $meta['anomaly_stats'] = $stats;
 
+        // Вычисляем сдвиги для коррекции ширины коридора
+        [$upperShift, $lowerShift] = $this->calculateShifts(
+            $historyData, $dftResult, $longStart, $longEnd, $longStep, $meta, $currentConfig
+        );
+
         // Payload
         $payload = [
             'meta'      => $meta,
@@ -365,6 +370,8 @@ class StatsCacheManager {
                 'coefficients' => $dftResult['lower']['coefficients'],
                 'trend'        => $dftResult['lower']['trend']
             ],
+            'upper_shift' => $upperShift,
+            'lower_shift' => $lowerShift,
         ];
 
         // Сохраняем в кэш
@@ -381,6 +388,84 @@ class StatsCacheManager {
         ]);
 
         return $payload;
+    }
+
+    /**
+     * Вычисляет сдвиги для коррекции ширины коридора на основе исторических данных.
+     *
+     * @param array $historyData Исторические данные [['time' => int, 'value' => float], ...]
+     * @param array $dftResult Результат DFT с коэффициентами и трендами
+     * @param int $longStart Начало периода
+     * @param int $longEnd Конец периода
+     * @param int $longStep Шаг
+     * @param array $meta Мета-данные
+     * @param array $currentConfig Текущая конфигурация
+     * @return array [upper_shift, lower_shift]
+     */
+    private function calculateShifts(
+        array $historyData,
+        array $dftResult,
+        int $longStart,
+        int $longEnd,
+        int $longStep,
+        array $meta,
+        array $currentConfig
+    ): array {
+        $minCorridorWidthFactor = $currentConfig['corrdor_params']['min_corridor_width_factor'] ?? 0.1; // default 10% of stddev or something
+
+        // Восстанавливаем коридор на исторический период
+        $upperSeries = $this->dftProcessor->restoreFullDFT(
+            $dftResult['upper']['coefficients'],
+            $longStart, $longEnd, $longStep,
+            $meta, $dftResult['upper']['trend']
+        );
+        $lowerSeries = $this->dftProcessor->restoreFullDFT(
+            $dftResult['lower']['coefficients'],
+            $longStart, $longEnd, $longStep,
+            $meta, $dftResult['lower']['trend']
+        );
+
+        // Создаем ассоциативные массивы для быстрого доступа
+        $upperMap = [];
+        foreach ($upperSeries as $point) {
+            $upperMap[$point['time']] = $point['value'];
+        }
+        $lowerMap = [];
+        foreach ($lowerSeries as $point) {
+            $lowerMap[$point['time']] = $point['value'];
+        }
+
+        $maxUpperShift = 0.0;
+        $maxLowerShift = 0.0;
+
+        foreach ($historyData as $point) {
+            $time = $point['time'];
+            $value = $point['value'];
+
+            if (!isset($upperMap[$time]) || !isset($lowerMap[$time])) {
+                continue;
+            }
+
+            $upper = $upperMap[$time];
+            $lower = $lowerMap[$time];
+
+            // Проверяем ширину
+            if ($upper <= $lower + $minCorridorWidthFactor) {
+                // Ширина недостаточна, нужно сдвинуть
+                $mid = ($upper + $lower) / 2;
+                if ($value > $mid) {
+                    // Метрика выше середины, сдвигаем upper вверх
+                    $shift = $minCorridorWidthFactor - ($upper - $lower);
+                    $maxUpperShift = max($maxUpperShift, $shift);
+                } else {
+                    // Метрика ниже середины, сдвигаем lower вниз
+                    $shift = $minCorridorWidthFactor - ($upper - $lower);
+                    $maxLowerShift = max($maxLowerShift, $shift);
+                }
+            }
+        }
+
+        return [$maxUpperShift, $maxLowerShift];
     }
 
     private function buildPlaceholder(string $query, string $labelsJson, int $start, int $end, int $step): array

@@ -9,7 +9,6 @@ use App\Formatters\ResponseFormatter;
 use App\Cache\CacheManagerFactory;
 use App\Utilities\PerformanceMonitor;
 use App\Processors\StatsCacheManager;
-use App\Processors\CorridorWidthEnsurer;
 use App\DI\Container;
 use App\Interfaces\GrafanaClientInterface;
 use App\Interfaces\LoggerInterface;
@@ -130,6 +129,22 @@ class CorridorBuilder
                 $cached['meta'], $cached['dft_lower']['trend']
             );
 
+            // Применяем сдвиги для коррекции ширины коридора
+            $upperShift = $cached['upper_shift'] ?? 0.0;
+            $lowerShift = $cached['lower_shift'] ?? 0.0;
+            if ($upperShift > 0.0) {
+                foreach ($upper as &$point) {
+                    $point['value'] += $upperShift;
+                }
+                unset($point);
+            }
+            if ($lowerShift > 0.0) {
+                foreach ($lower as &$point) {
+                    $point['value'] -= $lowerShift;
+                }
+                unset($point);
+            }
+
             // применяем автоскейл (масштабирование коридора) если он включён детектором
             // масштабируем значения коридора пропорционально отношению шага борды к историческому шагу из кэша
             $histStep = (int)($cached['meta']['step'] ?? $step);
@@ -153,16 +168,9 @@ class CorridorBuilder
                 );
             }
 
-            // корректируем ширину
-            list($cU,$cL) = CorridorWidthEnsurer::ensureWidth(
-                $upper, $lower,
-                $cached['dft_upper']['coefficients'][0]['amplitude'] ?? 0,
-                $cached['dft_lower']['coefficients'][0]['amplitude'] ?? 0,
-                $this->config, $this->logger,
-                $cached['dft_upper']['trend'],
-                $cached['dft_lower']['trend'],
-                $stddev
-            );
+            // коридор строится без коррекции ширины
+            $cU = $upper;
+            $cL = $lower;
 
             // аномалии (выровнять ряды по времени)
             $currStats = $this->anomalyDetector->calculateAnomalyStats(

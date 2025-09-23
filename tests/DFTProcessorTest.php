@@ -1,4 +1,3 @@
-
 <?php
 declare(strict_types=1);
 
@@ -32,7 +31,10 @@ class DFTProcessorTest extends TestCase
         $times = [1, 2, 3];
         $values = [2, 4, 6]; // Линейный тренд slope=2, intercept=0
 
-        $result = $this->processor->calculateLinearTrend($values, $times);
+        $reflection = new \ReflectionClass($this->processor);
+        $method = $reflection->getMethod('calculateLinearTrend');
+        $method->setAccessible(true);
+        $result = $method->invoke($this->processor, $values, $times);
 
         $this->assertEquals(2.0, $result['slope']);
         $this->assertEquals(0.0, $result['intercept']);
@@ -43,7 +45,10 @@ class DFTProcessorTest extends TestCase
         $times = [1];
         $values = [5];
 
-        $result = $this->processor->calculateLinearTrend($values, $times);
+        $reflection = new \ReflectionClass($this->processor);
+        $method = $reflection->getMethod('calculateLinearTrend');
+        $method->setAccessible(true);
+        $result = $method->invoke($this->processor, $values, $times);
 
         $this->assertEquals(0, $result['slope']);
         $this->assertEquals(5, $result['intercept']);
