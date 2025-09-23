@@ -384,31 +384,37 @@ class SQLiteCacheIO
             $stmt->execute([':query' => $query, ':metric_hash' => $metricHash]);
             $row = $stmt->fetch(\PDO::FETCH_ASSOC);
             if (!$row || !isset($row['config_hash'])) {
+                $this->logger->debug("shouldRecreateCache: no cache entry for query=$query, labels=$labelsJson, returning true");
                 return true;
             }
             $labels = json_decode($row['labels_json'], true);
             if (isset($labels['unused_metric']) && $labels['unused_metric'] === 'true') {
                 $age = time() - $row['created_at'];
                 if ($age <= $this->maxTtl) {
+                    $this->logger->debug("shouldRecreateCache: unused_metric within TTL for query=$query, labels=$labelsJson, age=$age <= {$this->maxTtl}, returning false");
                     return false;
                 }
             }
             $currentConfigHash = $this->configManager->createConfigHash($currentConfig);
             if ($row['config_hash'] !== $currentConfigHash) {
                 $this->logger->info("Конфигурация изменилась для запроса: $query. Текущий хеш: $currentConfigHash, сохраненный: {$row['config_hash']}. Требуется пересоздание кэша.");
+                $this->logger->debug("shouldRecreateCache: config hash mismatch for query=$query, labels=$labelsJson, current=$currentConfigHash, saved={$row['config_hash']}, returning true");
                 return true;
             }
             $age = time() - $row['created_at'];
             if ($age > $this->maxTtl) {
                 $this->logger->info("Кэш устарел для запроса: $query. Возраст: $age секунд");
+                $this->logger->debug("shouldRecreateCache: cache expired for query=$query, labels=$labelsJson, age=$age > {$this->maxTtl}, returning true");
                 return true;
             }
             if ($row['dft_rebuild_count'] > ($this->config['cache']['max_rebuild_count'] ?? 10)) {
                 $this->logger->warning("Высокое значение dft_rebuild_count ({$row['dft_rebuild_count']}) для запроса: $query, метрика: $labelsJson. Возможен конфликт конфигураций.");
             }
+            $this->logger->debug("shouldRecreateCache: cache valid for query=$query, labels=$labelsJson, returning false");
             return false;
         } catch (PDOException $e) {
             $this->logger->error("Не удалось проверить необходимость пересоздания кэша SQLite: " . $e->getMessage());
+            $this->logger->debug("shouldRecreateCache: exception for query=$query, labels=$labelsJson, returning true");
             return true;
         }
     }

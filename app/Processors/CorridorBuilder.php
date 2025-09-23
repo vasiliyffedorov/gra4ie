@@ -97,9 +97,15 @@ class CorridorBuilder
             // L1 integration: check for STALE md5 mismatch
             $requestMd5 = $this->client->getNormalizedRequestMd5($query) ?: '';
             $l1 = $this->cacheManager->loadMetricsCacheL1($query, $labelsJson);
-            if ($l1 && $l1['request_md5'] !== $requestMd5) {
-                $needRecalc = true;
-                $this->logger->info('L1 STALE md5 mismatch for ' . $query . ': old=' . $l1['request_md5'] . ', new=' . $requestMd5 . ', forcing recalc');
+            $l1Status = 'MISS';
+            if ($l1) {
+                if ($l1['request_md5'] === $requestMd5) {
+                    $l1Status = 'HIT';
+                } else {
+                    $l1Status = 'STALE';
+                    $needRecalc = true;
+                    $this->logger->info('L1 STALE md5 mismatch for ' . $query . ': old=' . $l1['request_md5'] . ', new=' . $requestMd5 . ', forcing recalc');
+                }
             }
 
             // пытаемся загрузить из кэша
@@ -149,6 +155,10 @@ class CorridorBuilder
             // масштабируем значения коридора пропорционально отношению шага борды к историческому шагу из кэша
             $histStep = (int)($cached['meta']['step'] ?? $step);
             $needScale = (bool)($cached['meta']['scaleCorridor'] ?? false);
+            if ($l1Status === 'HIT' && isset($l1['scale_corridor'])) {
+                $needScale = (bool)$l1['scale_corridor'];
+            }
+            $this->logger->info("Scale check for {$labelsJson}: l1Status={$l1Status}, scaleCorridor=" . ($cached['meta']['scaleCorridor'] ?? 'null') . ", l1_scale=" . ($l1['scale_corridor'] ?? 'null') . ", needScale={$needScale}, histStep={$histStep}, step={$step}");
             if ($needScale && $histStep > 0 && $step > 0 && $histStep !== $step) {
                 $factor = $step / $histStep;
                 foreach ($upper as &$p) {

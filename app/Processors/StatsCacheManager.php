@@ -117,8 +117,8 @@ class StatsCacheManager {
                 $maxPeriodDays = $optimalPeriodDays;
                 $this->logger->info("Using optimal period from permanent cache for $metricKey: $maxPeriodDays days");
             } else {
-                $maxPeriodDays = 12; // Default to 12 days if permanent cache is empty
-                $this->logger->info("Permanent cache empty for $metricKey, using default period: $maxPeriodDays days");
+                $maxPeriodDays = $this->optimizer->determineMaxPeriod($query, $labelsJson, $currentConfig['corrdor_params']['step']);
+                $this->logger->info("Permanent cache empty for $metricKey, using optimized period from HistoricalPeriodOptimizer: $maxPeriodDays days");
             }
             $periodSec = (int)($maxPeriodDays * 86400);
             $histEnd = time();
@@ -158,35 +158,55 @@ class StatsCacheManager {
             }
         }
 
-        // Автотюн периода, если достаточно данных (заморозить если L1 HIT с period)
+        // Определение периода: использовать из L1 если HIT, иначе autotune если MISS/STALE
+        $optimalPeriodDays = null;
         $autotuned = false;
         $originalHistoryData = $historyData;
         $originalLongStart = $longStart;
         $originalLongEnd = $longEnd;
-        $freezeAutotune = ($l1Status === 'HIT' && $l1['optimal_period_days'] !== null);
-        if (!$freezeAutotune && count($historyData) >= 100) {
+        if ($l1Status === 'HIT' && $l1['optimal_period_days'] !== null) {
+            $optimalPeriodDays = $l1['optimal_period_days'];
+            $this->logger->info("Используем период из L1 HIT для {$labelsJson}: {$optimalPeriodDays} дней");
+            // Подрезать historyData на период из L1
+            $fullPeriodSec = (int)($optimalPeriodDays * 86400);
+            $longEndNew = $originalLongEnd;
+            $cutStart = $longEndNew - $fullPeriodSec;
+            $historyData = array_filter($originalHistoryData, fn($point) => $point['time'] >= $cutStart);
+            usort($historyData, fn($a, $b) => $a['time'] <=> $b['time']);
+            if (count($historyData) < $minPts) {
+                $this->logger->warning("Недостаточно данных после подрезки по L1 периоду, fallback на оригинал для {$labelsJson}");
+                $historyData = $originalHistoryData;
+                $longStart = $originalLongStart;
+                $longEnd = $originalLongEnd;
+            } else {
+                $range = $this->dataProcessor->getActualDataRange($historyData);
+                $longStart = $range['start'];
+                $longEnd = $range['end'];
+                $this->logger->info("Подрезка по L1 периоду для {$labelsJson}: {$optimalPeriodDays} дней, точек с " . count($originalHistoryData) . " до " . count($historyData));
+            }
+        } elseif (($l1Status === 'MISS' || $l1Status === 'STALE') && count($historyData) >= 100) {
             $historicalAssoc = [];
             foreach ($historyData as $point) {
                 $historicalAssoc[(int)$point['time']] = (float)$point['value'];
             }
             try {
                 $optimal = $this->autoTune->calculateOptimalPeriod($historicalAssoc);
-                $currentConfig['corrdor_params']['historical_period_days'] = $optimal;
-                $this->logger->info("Автотюн использован для {$labelsJson}: период {$optimal} дней");
+                $optimalPeriodDays = $optimal;
+                $autotuned = true;
+                $this->logger->info("Автотюн выполнен для {$labelsJson}: период {$optimal} дней");
 
-                // Подрезать historyData на новый период (удалить recent tail, оставить early head)
+                // Подрезать historyData на новый период
                 $fullPeriodSec = (int)($optimal * 86400);
                 $longEndNew = $originalLongEnd;
                 $cutStart = $longEndNew - $fullPeriodSec;
                 $historyData = array_filter($originalHistoryData, fn($point) => $point['time'] >= $cutStart);
                 usort($historyData, fn($a, $b) => $a['time'] <=> $b['time']);
                 if (count($historyData) < $minPts) {
-                    $this->logger->warning("Недостаточно данных после автотюна подрезки, fallback на оригинал");
+                    $this->logger->warning("Недостаточно данных после автотюна подрезки, fallback на оригинал для {$labelsJson}");
                     $historyData = $originalHistoryData;
                     $longStart = $originalLongStart;
                     $longEnd = $originalLongEnd;
                 } else {
-                    $autotuned = true;
                     $range = $this->dataProcessor->getActualDataRange($historyData);
                     $longStart = $range['start'];
                     $longEnd = $range['end'];
@@ -195,8 +215,14 @@ class StatsCacheManager {
             } catch (\InvalidArgumentException $e) {
                 $this->logger->warning("Автотюн не удался для {$labelsJson}: " . $e->getMessage());
             }
-        } elseif ($freezeAutotune) {
-            $this->logger->info("Автотюн заморожен L1 HIT для {$labelsJson}: период {$l1['optimal_period_days']} дней");
+        }
+
+        // Добавить выбранный период в config
+        $currentConfig['historical_period_days'] = $optimalPeriodDays;
+
+        // Проверить необходимость пересоздания кеша DFT
+        if (!$this->cacheManager->shouldRecreateCache($query, $labelsJson, $currentConfig)) {
+            return $cached;
         }
 
         // Автоматическое определение необходимости масштабирования (обобщённый алгоритм по последним 100 ненулевым точкам)
@@ -220,14 +246,13 @@ class StatsCacheManager {
         $minTs = $countS > 0 ? min(array_column($tail, 'time')) : null;
 
         // по умолчанию — скейла нет (применить HIT если есть)
-        $scaleCorridor = ($l1Status === 'HIT' && $l1['scale_corridor']) ? $l1['scale_corridor'] : false;
-        $freezeScaleDetection = ($l1Status === 'HIT' && $l1['scale_corridor'] !== null);
-
-        if ($freezeScaleDetection) {
-            $this->logger->info("Autoscale detection заморожена L1 HIT для {$labelsJson}: scale={$scaleCorridor}");
-        } elseif ($countS === 0 || $avgS100 <= 0.0 || $minTs === null) {
-            $this->logger->info("Autoscale(k={$k}) insufficient S data for {$labelsJson}: countS={$countS}, avgS100={$avgS100}");
-        } else {
+        $scaleCorridor = false;
+        $factor = null;
+        if ($l1Status === 'HIT' && $l1['scale_corridor'] !== null) {
+            $scaleCorridor = $l1['scale_corridor'];
+            $factor = $l1['factor'];
+            $this->logger->info("Autoscale из L1 HIT для {$labelsJson}: scale={$scaleCorridor}, factor=" . ($factor ?? 'null'));
+        } elseif (($l1Status === 'MISS' || $l1Status === 'STALE') && $countS > 0 && $avgS100 > 0.0 && $minTs !== null) {
             // 2) Выравниваем границы для окна проверки и запрашиваем ряд на шаге S/k
             // from_aligned = ceil(min_ts / S) * S; to_aligned = $longEnd (он уже привязан к текущему диапазону)
             $fromAligned = (int)(ceil($minTs / $S) * $S);
@@ -377,15 +402,16 @@ class StatsCacheManager {
         // Сохраняем в кэш
         $this->cacheManager->saveToCache($query, $labelsJson, $payload, $currentConfig);
 
-        // Сохраняем в L1
-        $optimalPeriodDays = $autotuned ? $currentConfig['corrdor_params']['historical_period_days'] : null;
-        $this->cacheManager->saveMetricsCacheL1($query, $labelsJson, [
-            'request_md5' => $requestMd5,
-            'optimal_period_days' => $optimalPeriodDays,
-            'scale_corridor' => $scaleCorridor,
-            'k' => $k,
-            'factor' => isset($factor) ? $factor : null,
-        ]);
+        // Сохраняем в L1 только при MISS, STALE или если autotuned/scale изменился
+        if ($l1Status === 'MISS' || $l1Status === 'STALE' || $autotuned || ($scaleCorridor !== ($l1['scale_corridor'] ?? null))) {
+            $this->cacheManager->saveMetricsCacheL1($query, $labelsJson, [
+                'request_md5' => $requestMd5,
+                'optimal_period_days' => $optimalPeriodDays,
+                'scale_corridor' => $scaleCorridor,
+                'k' => $k,
+                'factor' => $factor,
+            ]);
+        }
 
         return $payload;
     }

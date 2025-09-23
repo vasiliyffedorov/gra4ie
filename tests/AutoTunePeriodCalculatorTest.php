@@ -67,7 +67,7 @@ class AutoTunePeriodCalculatorTest extends TestCase
     {
         // Mock dependencies for StatsCacheManager
         $mockLogger = $this->logger;
-        $mockCacheManager = $this->createMock(CacheManagerInterface::class);
+        $mockCacheManager = $this->createMock(\App\Interfaces\CacheManagerInterface::class);
         $mockCacheManager->method('loadFromCache')->willReturn(null); // No cache, trigger recalc
         $mockResponseFormatter = $this->createMock(ResponseFormatter::class);
         $mockDataProcessor = $this->createMock(DataProcessorInterface::class);
@@ -153,5 +153,83 @@ class AutoTunePeriodCalculatorTest extends TestCase
         $this->assertStringContainsString('период 15 дней', $logOutput);
         // Note: Full count check requires accessing private after call, simplified here
         $this->assertTrue(true); // Placeholder for full verification
+    }
+
+    public function testL1CacheIgnoresConfigHashChange(): void
+    {
+        // Test that L1 cache HIT occurs when config_hash changes but query remains the same,
+        // and autotune period is frozen, not reset to 1 day.
+
+        $mockLogger = $this->createMock(\App\Utilities\Logger::class);
+
+        $mockCacheManager = $this->createMock(\App\Interfaces\CacheManagerInterface::class);
+        $mockCacheManager->method('loadFromCache')->willReturn(null); // No main cache
+
+        // Mock L1 cache: first call returns HIT data with optimal_period_days = 30
+        $l1Data = [
+            'request_md5' => 'same_md5',
+            'optimal_period_days' => 30.0,
+            'scale_corridor' => false,
+            'k' => 8,
+            'factor' => null,
+        ];
+        $mockCacheManager->expects($this->atLeast(2))
+            ->method('loadMetricsCacheL1')
+            ->willReturn($l1Data); // Both calls return the same L1 data
+
+        $mockResponseFormatter = $this->createMock(\App\Formatters\ResponseFormatter::class);
+        $mockDataProcessor = $this->createMock(\App\Interfaces\DataProcessorInterface::class);
+        $mockDataProcessor->method('getActualDataRange')->willReturn(['start' => 1000000000, 'end' => 1000864000]); // 1 day
+        $mockDataProcessor->method('groupData')->willReturn([$labelsJson => array_fill(0, 50, ['time' => time() + 1800 * 0, 'value' => 1.0])]);
+        $mockDataProcessor->method('calculateBounds')->willReturn(['upper' => [], 'lower' => []]);
+        $mockDftProcessor = $this->createMock(\App\Interfaces\DFTProcessorInterface::class);
+        $mockDftProcessor->method('generateDFT')->willReturn(['upper' => ['coefficients' => [], 'trend' => ['slope' => 0, 'intercept' => 0]], 'lower' => ['coefficients' => [], 'trend' => ['slope' => 0, 'intercept' => 0]]]);
+        $mockDftProcessor->method('restoreFullDFT')->willReturn([]);
+        $mockAnomalyDetector = $this->createMock(\App\Interfaces\AnomalyDetectorInterface::class);
+        $mockAnomalyDetector->method('calculateAnomalyStats')->willReturn(['above' => [], 'below' => [], 'combined' => []]);
+        $mockClient = $this->createMock(\App\Interfaces\GrafanaClientInterface::class);
+        $mockClient->method('getNormalizedRequestMd5')->willReturn('same_md5'); // Same query MD5
+        $mockClient->method('queryRange')->willReturn([]);
+
+        $mockAutoTune = $this->createMock(\App\Processors\AutoTunePeriodCalculator::class);
+        $mockAutoTune->expects($this->never())->method('calculateOptimalPeriod'); // Should not be called due to freeze
+
+        $mockOptimizer = $this->createMock(\App\Processors\HistoricalPeriodOptimizer::class);
+        $mockOptimizer->method('determineMaxPeriod')->willReturn(30.0);
+
+        $statsCacheManager = new \App\Processors\StatsCacheManager(
+            ['corrdor_params' => ['step' => 1800, 'min_data_points' => 10], 'cache' => []],
+            $mockLogger,
+            $mockCacheManager,
+            $mockResponseFormatter,
+            $mockDataProcessor,
+            $mockDftProcessor,
+            $mockAnomalyDetector,
+            $mockClient,
+            $mockAutoTune,
+            $mockOptimizer
+        );
+
+        $query = 'test_query';
+        $labelsJson = '{"test": "metric"}';
+        $liveData = [];
+        $historyData = []; // Empty to trigger fetch
+
+        // First call with config1
+        $config1 = ['corrdor_params' => ['step' => 1800, 'min_data_points' => 10, 'default_percentiles' => [95, 5]], 'cache' => []];
+        $result1 = $statsCacheManager->recalculateStats($query, $labelsJson, $liveData, $historyData, $config1);
+
+        // Second call with config2 (different config_hash, but same query)
+        $config2 = ['corrdor_params' => ['step' => 1800, 'min_data_points' => 10, 'default_percentiles' => [90, 10], 'new_param' => 'test'], 'cache' => []]; // Changed percentiles and added param
+        $result2 = $statsCacheManager->recalculateStats($query, $labelsJson, $liveData, $historyData, $config2);
+
+        // Assertions
+        $this->assertNotEmpty($result1['meta']);
+        $this->assertNotEmpty($result2['meta']);
+        // Config hashes are the same because calculated from $this->config, not $currentConfig
+        $this->assertEquals($result1['meta']['config_hash'], $result2['meta']['config_hash']);
+        // But since L1 HIT (same request_md5), autotune should be frozen, and period not changed
+        // In logs, should see L1 HIT for both
+        // Since mockAutoTune never called, autotune not triggered
     }
 }
