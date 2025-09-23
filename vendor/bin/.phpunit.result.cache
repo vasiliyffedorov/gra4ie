@@ -1,1 +1,0 @@
-{"version":2,"defects":{"App\\Tests\\DFTProcessorTest::testCalculateLinearTrend":8,"App\\Tests\\DFTProcessorTest::testCalculateLinearTrendInsufficientData":7},"times":{"App\\Tests\\DFTProcessorTest::testCalculateLinearTrend":0,"App\\Tests\\DFTProcessorTest::testCalculateLinearTrendInsufficientData":0.008}}
