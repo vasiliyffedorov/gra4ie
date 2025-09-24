@@ -34,4 +34,6 @@ interface CacheManagerInterface
 
     // Grafana instances
     public function getGrafanaInstanceIdByUrl(string $url): ?int;
+
+    public function getGrafanaInstanceByUrl(string $url): ?array;
 }

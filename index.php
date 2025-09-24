@@ -134,7 +134,17 @@ function extractGrafanaInstanceData(\App\Interfaces\CacheManagerInterface $cache
     $url = "http://{$remoteAddr}:{$login}";
 
     $datasourceUid = $_SERVER['HTTP_X_DATASOURCE_UID'] ?? '';
-    $blacklistUids = $datasourceUid ? [$datasourceUid] : [];
+
+    // Загружаем существующий экземпляр
+    $existingInstance = $cacheManager->getGrafanaInstanceByUrl($url);
+    $blacklistUids = $existingInstance ? $existingInstance['blacklist_uids'] : [];
+
+    // Обновляем blacklist только при наличии UID
+    if (!empty($datasourceUid) && !in_array($datasourceUid, $blacklistUids)) {
+        $blacklistUids[] = $datasourceUid;
+    }
+
+    $logger->info("Extracted datasource UID: '$datasourceUid', current blacklist_uids: " . json_encode($blacklistUids));
 
     $instance = [
         'name' => $login,
@@ -143,9 +153,15 @@ function extractGrafanaInstanceData(\App\Interfaces\CacheManagerInterface $cache
         'blacklist_uids' => $blacklistUids
     ];
 
+    $logger->info("Saving Grafana instance with blacklist_uids: " . json_encode($blacklistUids));
     $saved = $cacheManager->saveGrafanaInstance($instance);
     if ($saved) {
-        if ($cacheManager->grafanaInstanceExistsByUrl($url)) {
+        $logger->info("Grafana instance saved successfully, blacklist preserved: " . json_encode($blacklistUids));
+    } else {
+        $logger->error("Failed to save Grafana instance, blacklist may not be preserved");
+    }
+    if ($saved) {
+        if ($existingInstance) {
             $logger->info("Grafana instance updated: {$url}");
         } else {
             $logger->info("New Grafana instance saved: {$url}");
