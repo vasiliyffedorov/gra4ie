@@ -154,6 +154,7 @@ class CorridorBuilder
             // применяем автоскейл (масштабирование коридора) если он включён детектором
             // масштабируем значения коридора пропорционально отношению шага борды к историческому шагу из кэша
             $histStep = (int)($cached['meta']['step'] ?? $step);
+            $this->logger->debug("CorridorBuilder: current step = $step, histStep = $histStep");
             $needScale = (bool)($cached['meta']['scaleCorridor'] ?? false);
             if ($l1Status === 'HIT' && isset($l1['scale_corridor'])) {
                 $needScale = (bool)$l1['scale_corridor'];
@@ -181,15 +182,31 @@ class CorridorBuilder
             // коридор строится без коррекции ширины
             $cU = $upper;
             $cL = $lower;
-
+            
+            // Агрегируем dataPoints на histStep перед расчетом аномалий
+            $aggregatedOrig = [];
+            $buckets = [];
+            foreach ($orig as $point) {
+                $bucketKey = floor($point['time'] / $histStep) * $histStep;
+                if (!isset($buckets[$bucketKey])) {
+                    $buckets[$bucketKey] = [];
+                }
+                $buckets[$bucketKey][] = $point['value'];
+            }
+            foreach ($buckets as $time => $values) {
+                $avg = count($values) > 0 ? array_sum($values) / count($values) : 0;
+                $aggregatedOrig[] = ['time' => $time, 'value' => $avg];
+            }
+            $this->logger->debug("Aggregated dataPoints for anomaly stats: before=" . count($orig) . ", after=" . count($aggregatedOrig) . ", histStep=$histStep");
+            
             // аномалии (выровнять ряды по времени)
             $currStats = $this->anomalyDetector->calculateAnomalyStats(
-                $this->alignByTime($orig, $cU, $cL),
+                $this->alignByTime($aggregatedOrig, $cU, $cL),
                 $cU, $cL,
                 $this->config['corrdor_params']['default_percentiles'],
                 true, // raw
                 false, // not historical
-                $step  // actual step for live
+                $histStep  // actual step for live, use histStep to match historical percentiles
             );
    
             // concern-метрики
@@ -200,8 +217,9 @@ class CorridorBuilder
             $belowConcerns = $this->anomalyDetector->calculateIntegralMetric(
                 $currStats['below'], $cached['meta']['anomaly_stats']['below'] ?? []
             );
-            $aboveC = $aboveConcerns['total_concern'] * min(1, ($currStats['above']['time_outside_percent'] ?? 0) / 100);
-            $belowC = $belowConcerns['total_concern'] * min(1, ($currStats['below']['time_outside_percent'] ?? 0) / 100);
+            $aboveC = $aboveConcerns['total_concern'];
+            $belowC = $belowConcerns['total_concern'];
+            $this->logger->debug("CorridorBuilder: anomaly_concern_above = $aboveC, anomaly_concern_below = $belowC");
    
             $aboveSums = $this->anomalyDetector->calculateIntegralMetricSum(
                 $currStats['above'], $cached['meta']['anomaly_stats']['above'] ?? [], $wsize
