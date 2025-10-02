@@ -3,8 +3,6 @@ declare(strict_types=1);
 
 namespace App\DI;
 
-use App\Processors\AutoTunePeriodCalculator;
-
 use App\Interfaces\LoggerInterface;
 use App\Interfaces\CacheManagerInterface;
 use App\Interfaces\GrafanaClientInterface;
@@ -96,13 +94,6 @@ class Container
             return new AnomalyDetector($config, $logger);
         };
 
-        // AutoTunePeriodCalculator
-        $this->services[AutoTunePeriodCalculator::class] = function () {
-            $logger = $this->get(LoggerInterface::class);
-            $config = $this->get('config');
-            return new AutoTunePeriodCalculator($logger, $config);
-        };
-    
         // HistoricalPeriodOptimizer
         $this->services[\App\Processors\HistoricalPeriodOptimizer::class] = function () {
             $config = $this->get('config');
@@ -141,9 +132,8 @@ class Container
             $dftProcessor = $this->get(DFTProcessorInterface::class);
             $anomalyDetector = $this->get(AnomalyDetectorInterface::class);
             $client = $this->get(GrafanaClientInterface::class);
-            $autoTune = $this->get(AutoTunePeriodCalculator::class);
             $optimizer = $this->get(\App\Processors\HistoricalPeriodOptimizer::class);
-            return new \App\Processors\StatsCacheManager($config, $logger, $cacheManager, $responseFormatter, $dataProcessor, $dftProcessor, $anomalyDetector, $client, $autoTune, $optimizer);
+            return new \App\Processors\StatsCacheManager($config, $logger, $cacheManager, $responseFormatter, $dataProcessor, $dftProcessor, $anomalyDetector, $client, $optimizer);
         };
         // PSR-16 Cache Adapter
         $this->services[SimpleCacheInterface::class] = function () {

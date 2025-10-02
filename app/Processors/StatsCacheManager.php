@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Processors;
 
-use App\Processors\AutoTunePeriodCalculator;
+use App\Processors\PostCorridorFilter;
 
 use App\Interfaces\LoggerInterface;
 use App\Interfaces\CacheManagerInterface;
@@ -22,7 +22,6 @@ class StatsCacheManager {
     private DFTProcessorInterface $dftProcessor;
     private AnomalyDetectorInterface $anomalyDetector;
     private GrafanaClientInterface $client;
-    private AutoTunePeriodCalculator $autoTune;
     private \App\Processors\HistoricalPeriodOptimizer $optimizer;
 
     public function __construct(
@@ -34,7 +33,6 @@ class StatsCacheManager {
         DFTProcessorInterface $dftProcessor,
         AnomalyDetectorInterface $anomalyDetector,
         GrafanaClientInterface $client,
-        AutoTunePeriodCalculator $autoTune,
         \App\Processors\HistoricalPeriodOptimizer $optimizer
     ) {
         if (!isset($config['corrdor_params']['step']) || !isset($config['cache'])) {
@@ -48,7 +46,6 @@ class StatsCacheManager {
         $this->dftProcessor = $dftProcessor;
         $this->anomalyDetector = $anomalyDetector;
         $this->client = $client;
-        $this->autoTune = $autoTune;
         $this->optimizer = $optimizer;
     }
 
@@ -105,29 +102,66 @@ class StatsCacheManager {
         $this->anomalyDetector->updateConfig($currentConfig);
         $this->optimizer->updateConfig($currentConfig);
         
-        // Fetch history if empty or insufficient
-        if (empty($historyData)) {
-            $metricKey = $query . '|' . $labelsJson;
-            // Check permanent cache for optimal period first
-            $l1Data = $this->cacheManager->loadMetricsCacheL1($query, $labelsJson);
-            $optimalPeriodDays = $l1Data['optimal_period_days'] ?? null;
-            $this->logger->info("Checked permanent cache for $metricKey: optimal_period_days=" . ($optimalPeriodDays ?? 'null'));
+        // Determine optimal period first
+        $metricKey = $query . '|' . $labelsJson;
+        $l1Data = $this->cacheManager->loadMetricsCacheL1($query, $labelsJson);
+        $optimalPeriodDays = $l1Data['optimal_period_days'] ?? null;
+        $this->logger->info("Checked permanent cache for $metricKey: optimal_period_days=" . ($optimalPeriodDays ?? 'null'));
 
-            if ($optimalPeriodDays !== null) {
-                $maxPeriodDays = $optimalPeriodDays;
-                $this->logger->info("Using optimal period from permanent cache for $metricKey: $maxPeriodDays days");
-            } else {
-                $maxPeriodDays = $this->optimizer->determineMaxPeriod($query, $labelsJson, $currentConfig['corrdor_params']['step']);
-                $this->logger->info("Permanent cache empty for $metricKey, using optimized period from HistoricalPeriodOptimizer: $maxPeriodDays days");
+        if ($optimalPeriodDays !== null) {
+            $maxPeriodDays = $optimalPeriodDays;
+            $this->logger->info("Using optimal period from permanent cache for $metricKey: $maxPeriodDays days");
+        } else {
+            $maxPeriodDays = $this->optimizer->determineMaxPeriod($query, $labelsJson, $currentConfig['corrdor_params']['step']);
+            $this->logger->info("Permanent cache empty for $metricKey, using optimized period from HistoricalPeriodOptimizer: $maxPeriodDays days");
+        }
+
+        // Fetch history if empty or insufficient duration
+        $needFetch = empty($historyData);
+        if (!$needFetch) {
+            $range = $this->dataProcessor->getActualDataRange($historyData);
+            $providedDurationDays = ($range['end'] - $range['start']) / 86400;
+            $this->logger->info("Provided historyData duration: {$providedDurationDays} days, points: " . count($historyData));
+            if ($providedDurationDays < $maxPeriodDays) {
+                $this->logger->info("Provided data shorter than optimal period {$maxPeriodDays} days, fetching additional data");
+                $needFetch = true;
             }
+        }
+        if ($needFetch) {
             $periodSec = (int)($maxPeriodDays * 86400);
             $histEnd = time();
             $histStart = $histEnd - $periodSec;
+            $this->logger->info("Fetching additional data for $metricKey: period {$maxPeriodDays} days, from {$histStart} to {$histEnd}");
             $longRaw = $this->client->queryRange($query, $histStart, $histEnd, $currentConfig['corrdor_params']['step']);
             $longGrouped = $this->dataProcessor->groupData($longRaw);
-            $historyData = $longGrouped[$labelsJson] ?? [];
-            $this->logger->info("Fetched adaptive history for $metricKey: $maxPeriodDays days, " . count($historyData) . " points");
+            $fetchedData = $longGrouped[$labelsJson] ?? [];
+            $this->logger->info("Fetched adaptive history for $metricKey: $maxPeriodDays days, " . count($fetchedData) . " points");
+            if (empty($historyData)) {
+                $historyData = $fetchedData;
+                $this->logger->info("Using fetched data as historyData: " . count($historyData) . " points");
+            } else {
+                $originalCount = count($historyData);
+                // Merge with provided data
+                $historyData = array_merge($historyData, $fetchedData);
+                $historyData = array_unique($historyData, SORT_REGULAR); // Remove duplicates if any
+                usort($historyData, fn($a, $b) => $a['time'] <=> $b['time']);
+                $addedPoints = count($historyData) - $originalCount;
+                $this->logger->info("Merged historyData: original {$originalCount} points, added {$addedPoints} points, total " . count($historyData));
+            }
         }
+
+        // Preprocess data: trim leading and trailing zeros
+        $originalHistoryData = $historyData;
+        $historicalAssoc = [];
+        foreach ($historyData as $point) {
+            $historicalAssoc[(int)$point['time']] = (float)$point['value'];
+        }
+        $historicalAssoc = $this->preprocessData($historicalAssoc);
+        $historyData = [];
+        foreach ($historicalAssoc as $t => $v) {
+            $historyData[] = ['time' => $t, 'value' => $v];
+        }
+        usort($historyData, fn($a, $b) => $a['time'] <=> $b['time']);
 
         // Рассчитываем DFT и статистики
         $range = $this->dataProcessor->getActualDataRange($historyData);
@@ -136,8 +170,12 @@ class StatsCacheManager {
         $longStep = $currentConfig['corrdor_params']['step'];
 
         $minPts = $currentConfig['corrdor_params']['min_data_points'];
-        if (count($historyData) < $minPts) {
-            $this->logger->warning("Недостаточно долгосрочных данных, fallback to live");
+        $historyCount = count($historyData);
+        if ($historyCount < $minPts) {
+            $this->logger->warning("Недостаточно долгосрочных данных: {$historyCount} < {$minPts}, fallback to live (possible issue with short periods)");
+            if ($optimalPeriodDays !== null && $optimalPeriodDays <= 7) {
+                $this->logger->warning("Fallback triggered for short period {$optimalPeriodDays} days due to insufficient data for {$labelsJson}");
+            }
             if (!empty($liveData)) {
                 $values = array_column($liveData, 'value');
                 $mean = array_sum($values) / count($values);
@@ -158,9 +196,8 @@ class StatsCacheManager {
             }
         }
 
-        // Определение периода: использовать из L1 если HIT, иначе autotune если MISS/STALE
+        // Определение периода: использовать из L1 если HIT, иначе maxPeriodDays из optimizer
         $optimalPeriodDays = null;
-        $autotuned = false;
         $originalHistoryData = $historyData;
         $originalLongStart = $longStart;
         $originalLongEnd = $longEnd;
@@ -171,10 +208,15 @@ class StatsCacheManager {
             $fullPeriodSec = (int)($optimalPeriodDays * 86400);
             $longEndNew = $originalLongEnd;
             $cutStart = $longEndNew - $fullPeriodSec;
-            $historyData = array_filter($originalHistoryData, fn($point) => $point['time'] >= $cutStart);
+            $this->logger->info("L1 trimming debug: longStart={$originalLongStart}, longEnd={$originalLongEnd}, fullPeriodSec={$fullPeriodSec}, cutStart={$cutStart}, originalCount=" . count($originalHistoryData));
+            $historyData = array_filter($historyData, fn($point) => $point['time'] >= $cutStart);
             usort($historyData, fn($a, $b) => $a['time'] <=> $b['time']);
+            $this->logger->info("After L1 trimming: count=" . count($historyData));
             if (count($historyData) < $minPts) {
-                $this->logger->warning("Недостаточно данных после подрезки по L1 периоду, fallback на оригинал для {$labelsJson}");
+                $this->logger->warning("Недостаточно данных после подрезки по L1 периоду, fallback на preprocessed без подрезки для {$labelsJson}");
+                if ($optimalPeriodDays <= 7) {
+                    $this->logger->warning("Fallback after short period L1 trimming for {$labelsJson}");
+                }
                 $historyData = $originalHistoryData;
                 $longStart = $originalLongStart;
                 $longEnd = $originalLongEnd;
@@ -183,47 +225,57 @@ class StatsCacheManager {
                 $longStart = $range['start'];
                 $longEnd = $range['end'];
                 $this->logger->info("Подрезка по L1 периоду для {$labelsJson}: {$optimalPeriodDays} дней, точек с " . count($originalHistoryData) . " до " . count($historyData));
-            }
-        } elseif (($l1Status === 'MISS' || $l1Status === 'STALE') && count($historyData) >= 100) {
-            $historicalAssoc = [];
-            foreach ($historyData as $point) {
-                $historicalAssoc[(int)$point['time']] = (float)$point['value'];
-            }
-            try {
-                $optimal = $this->autoTune->calculateOptimalPeriod($historicalAssoc);
-                $optimalPeriodDays = $optimal;
-                $autotuned = true;
-                $this->logger->info("Автотюн выполнен для {$labelsJson}: период {$optimal} дней");
-
-                // Подрезать historyData на новый период
-                $fullPeriodSec = (int)($optimal * 86400);
-                $longEndNew = $originalLongEnd;
-                $cutStart = $longEndNew - $fullPeriodSec;
-                $historyData = array_filter($originalHistoryData, fn($point) => $point['time'] >= $cutStart);
-                usort($historyData, fn($a, $b) => $a['time'] <=> $b['time']);
-                if (count($historyData) < $minPts) {
-                    $this->logger->warning("Недостаточно данных после автотюна подрезки, fallback на оригинал для {$labelsJson}");
-                    $historyData = $originalHistoryData;
-                    $longStart = $originalLongStart;
-                    $longEnd = $originalLongEnd;
-                } else {
-                    $range = $this->dataProcessor->getActualDataRange($historyData);
-                    $longStart = $range['start'];
-                    $longEnd = $range['end'];
-                    $this->logger->info("Автотюн подрезка для {$labelsJson}: период {$optimal} дней, точек с " . count($originalHistoryData) . " до " . count($historyData));
+                if ($optimalPeriodDays <= 7) {
+                    $this->logger->info("Short period (<=7d) trimming applied for {$labelsJson}");
                 }
-            } catch (\InvalidArgumentException $e) {
-                $this->logger->warning("Автотюн не удался для {$labelsJson}: " . $e->getMessage());
+            }
+        } else {
+            $optimalPeriodDays = $maxPeriodDays;
+            $this->logger->info("Using maxPeriodDays from optimizer for {$labelsJson}: {$maxPeriodDays} days");
+
+            // Подрезать historyData на maxPeriodDays
+            $fullPeriodSec = (int)($maxPeriodDays * 86400);
+            $longEndNew = $originalLongEnd;
+            $cutStart = $longEndNew - $fullPeriodSec;
+            $this->logger->info("Optimizer trimming debug: longStart={$originalLongStart}, longEnd={$originalLongEnd}, fullPeriodSec={$fullPeriodSec}, cutStart={$cutStart}, originalCount=" . count($originalHistoryData));
+            $historyData = array_filter($historyData, fn($point) => $point['time'] >= $cutStart);
+            usort($historyData, fn($a, $b) => $a['time'] <=> $b['time']);
+            $this->logger->info("After optimizer trimming: count=" . count($historyData));
+            if (count($historyData) < $minPts) {
+                $this->logger->warning("Недостаточно данных после optimizer подрезки, fallback на preprocessed без подрезки для {$labelsJson}");
+                if ($maxPeriodDays <= 7) {
+                    $this->logger->warning("Fallback after short period optimizer trimming for {$labelsJson}");
+                }
+                $historyData = $originalHistoryData;
+                $longStart = $originalLongStart;
+                $longEnd = $originalLongEnd;
+            } else {
+                $range = $this->dataProcessor->getActualDataRange($historyData);
+                $longStart = $range['start'];
+                $longEnd = $range['end'];
+                $this->logger->info("Optimizer подрезка для {$labelsJson}: период {$maxPeriodDays} дней, точек с " . count($originalHistoryData) . " до " . count($historyData));
+                if ($maxPeriodDays <= 7) {
+                    $this->logger->info("Short period (<=7d) optimizer trimming applied for {$labelsJson}");
+                }
             }
         }
 
         // Добавить выбранный период в config
         $currentConfig['historical_period_days'] = $optimalPeriodDays;
+        unset($currentConfig['historical_period_days']);
+
+        // Адаптивный min_data_points
+        if ($optimalPeriodDays !== null) {
+            $currentConfig['corrdor_params']['min_data_points'] = $optimalPeriodDays <= 7 ? 5 : 50;
+            $this->logger->info("Adaptive min_data_points for period {$optimalPeriodDays} days: " . $currentConfig['corrdor_params']['min_data_points']);
+        }
 
         // Проверить необходимость пересоздания кеша DFT
-        if (!$this->cacheManager->shouldRecreateCache($query, $labelsJson, $currentConfig)) {
+        if ($cached !== null && !$this->cacheManager->shouldRecreateCache($query, $labelsJson, $currentConfig)) {
+            $this->logger->info("Cache HIT: returning cached corridor for {$query}, {$labelsJson}");
             return $cached;
         }
+        $this->logger->info("Cache MISS: recalculating corridor for {$query}, {$labelsJson}");
 
         // Автоматическое определение необходимости масштабирования (обобщённый алгоритм по последним 100 ненулевым точкам)
         // 1) Берём последние 100 ненулевых/не-NaN точек из historyData на шаге S = $longStep
@@ -322,7 +374,31 @@ class StatsCacheManager {
         
         // Генерируем DFT
         $bounds = $this->dataProcessor->calculateBounds($historyData, $longStart, $longEnd, $longStep);
+
+        // Фильтрация выбросов после расчета границ
+        if ($currentConfig['corrdor_params']['enable_outlier_filter'] ?? false) {
+            $filteredHistory = PostCorridorFilter::filterOutliers(
+                $historyData,
+                $bounds,
+                $currentConfig['corrdor_params']['lower_percentile'] ?? 5.0,
+                $currentConfig['corrdor_params']['upper_percentile'] ?? 95.0
+            );
+            $this->logger->info("Filtered outliers: original " . count($historyData) . " points, filtered " . count($filteredHistory) . " points for {$query}, {$labelsJson}");
+            $historyData = $filteredHistory;
+            // Пересчитываем границы на отфильтрованных данных
+            $bounds = $this->dataProcessor->calculateBounds($historyData, $longStart, $longEnd, $longStep);
+        }
+
         $dftResult = $this->dftProcessor->generateDFT($bounds, $longStart, $longEnd, $longStep);
+
+        // Debug: log bounds for cgate__cgatecron
+        if (str_contains($query, 'cgate__cgatecron')) {
+            $upperBounds = array_column($bounds['upper'], 'value');
+            $lowerBounds = array_column($bounds['lower'], 'value');
+            $maxUpperBound = max($upperBounds);
+            $minLowerBound = min($lowerBounds);
+            $this->logger->info("Debug bounds for cgate__cgatecron: max upper bound=$maxUpperBound, min lower bound=$minLowerBound");
+        }
 
         // Рассчитываем stddev для original historyData
         $values = array_column($historyData, 'value');
@@ -350,7 +426,7 @@ class StatsCacheManager {
             'dataStart'         => $longStart,
             'step'              => $longStep,
             'totalDuration'     => $longEnd - $longStart,
-            'config_hash'       => $this->createConfigHash($currentConfig),
+            'config_hash'       => $this->createConfigHash($this->config),
             'dft_rebuild_count' => ($cached['meta']['dft_rebuild_count'] ?? 0) + 1,
             'labels'            => json_decode($labelsJson, true),
             'created_at'        => time(),
@@ -402,8 +478,8 @@ class StatsCacheManager {
         // Сохраняем в кэш
         $this->cacheManager->saveToCache($query, $labelsJson, $payload, $currentConfig);
 
-        // Сохраняем в L1 только при MISS, STALE или если autotuned/scale изменился
-        if ($l1Status === 'MISS' || $l1Status === 'STALE' || $autotuned || ($scaleCorridor !== ($l1['scale_corridor'] ?? null))) {
+        // Сохраняем в L1 только при MISS, STALE или если scale изменился
+        if ($l1Status === 'MISS' || $l1Status === 'STALE' || ($scaleCorridor !== ($l1['scale_corridor'] ?? null))) {
             $this->cacheManager->saveMetricsCacheL1($query, $labelsJson, [
                 'request_md5' => $requestMd5,
                 'optimal_period_days' => $optimalPeriodDays,
@@ -437,7 +513,7 @@ class StatsCacheManager {
         array $meta,
         array $currentConfig
     ): array {
-        $minCorridorWidthFactor = $currentConfig['corrdor_params']['min_corridor_width_factor'] ?? 0.1; // default 10% of stddev or something
+        $minCorridorWidthFactor = $currentConfig['corrdor_params']['min_corridor_width_factor'] ?? 0.05; // default 5% of stddev or something
 
         // Восстанавливаем коридор на исторический период
         $upperSeries = $this->dftProcessor->restoreFullDFT(
@@ -521,6 +597,44 @@ class StatsCacheManager {
             'dft_upper' => ['coefficients'=>[], 'trend'=>['slope'=>0,'intercept'=>0]],
             'dft_lower' => ['coefficients'=>[], 'trend'=>['slope'=>0,'intercept'=>0]],
         ];
+    }
+
+    private function preprocessData(array $raw): array
+    {
+        $allZeros = true;
+        $firstNonzeroKey = null;
+        foreach ($raw as $t => $v) {
+            if ($v > 0) {
+                $firstNonzeroKey = $t;
+                $allZeros = false;
+                break;
+            }
+        }
+
+        $data = $raw;
+        if (!$allZeros && $firstNonzeroKey !== null) {
+            $keys = array_keys($raw);
+            $trimIndex = array_search($firstNonzeroKey, $keys);
+            $data = array_slice($raw, $trimIndex, null, true);
+        }
+
+        // Обрезка хвостовых нулей
+        if (!empty($data)) {
+            $lastNonzeroKey = null;
+            foreach (array_reverse($data, true) as $t => $v) {
+                if ($v > 0) {
+                    $lastNonzeroKey = $t;
+                    break;
+                }
+            }
+            if ($lastNonzeroKey !== null) {
+                $keys = array_keys($data);
+                $trimIndex = array_search($lastNonzeroKey, $keys) + 1;
+                $data = array_slice($data, 0, $trimIndex, true);
+            }
+        }
+
+        return $data;
     }
 
     private function createConfigHash(array $config): string

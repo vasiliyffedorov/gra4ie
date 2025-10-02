@@ -60,10 +60,9 @@ class DataProcessor implements DataProcessorInterface {
             return ['upper' => [], 'lower' => []];
         }
 
-        // Интерполируем данные для обеспечения кратности шага
-        $interpolatedData = $this->interpolateData($data, $start, $end, $step);
-        $values = array_column($interpolatedData, 'value');
-        $times = array_column($interpolatedData, 'time');
+        // Используем неравномерные данные напрямую для NU DFT
+        $values = array_column($data, 'value');
+        $times = array_column($data, 'time');
 
         // Проверяем конфигурацию
         if (!is_array($this->config['corrdor_params']) ||

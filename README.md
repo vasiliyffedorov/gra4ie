@@ -120,7 +120,7 @@ composer test
 ./vendor/bin/phpunit
 ```
 
-Тесты включают AutoTunePeriodCalculatorTest.php, DFTProcessorTest.php и другие.
+Тесты включают DFTProcessorTest.php и другие.
 
 ## Архитектура
 
@@ -133,7 +133,6 @@ composer test
   - `AnomalyDetector.php` — расчет аномалий, перцентилей, интегральных метрик.
   - `StatsCalculator.php` — агрегация статистик, пересчет данных.
   - `StatsCacheManager.php` — управление кэшем статистик с авто-масштабированием.
-  - `AutoTunePeriodCalculator.php` — оптимизация периодов анализа на основе DFT.
   - `HistoricalPeriodOptimizer.php` — определение максимальных периодов для метрик.
   - `LinearTrendCalculator.php` — расчет линейных трендов.
   - `FourierTransformer.php` — низкоуровневые преобразования Фурье.
@@ -145,7 +144,7 @@ composer test
 ## Структура проекта
 
 - `app/`: Основной код (Cache, Clients, DI, Formatters, Interfaces, Processors, Utilities).
-- `tests/`: PHPUnit-тесты для ключевых классов (AutoTunePeriodCalculatorTest.php, DFTProcessorTest.php, etc.).
+- `tests/`: PHPUnit-тесты для ключевых классов (DFTProcessorTest.php, etc.).
 - `config/`: config.cfg — плоский INI с вложенными ключами для конфигурации.
 - `bin/`: CLI-скрипты для обслуживания (update_dashboards_cache.php, test_psr_cache.php, check_dangerous_metrics.php).
 - `examples/`: Скриншоты демонстрации работы.

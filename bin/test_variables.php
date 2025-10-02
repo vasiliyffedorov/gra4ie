@@ -89,9 +89,6 @@ try {
 
     echo "Config hashes different: " . ($result1['meta']['config_hash'] !== $result2['meta']['config_hash'] ? 'yes' : 'no') . "\n";
 
-    // Проверить L1 HIT в логах (но поскольку симуляция, проверить, что период не 1 день)
-    // В реальности, если L1 HIT, autotune frozen, период остается 30 дней, не становится 1
-
 } catch (Exception $e) {
     echo "Error: " . $e->getMessage() . "\n";
 }

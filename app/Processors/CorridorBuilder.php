@@ -182,6 +182,15 @@ class CorridorBuilder
             // коридор строится без коррекции ширины
             $cU = $upper;
             $cL = $lower;
+
+            // Debug: log corridor values for cgate__cgatecron
+            if (str_contains($query, 'cgate__cgatecron')) {
+                $upperValues = array_column($cU, 'value');
+                $lowerValues = array_column($cL, 'value');
+                $maxUpper = max($upperValues);
+                $minLower = min($lowerValues);
+                $this->logger->info("Debug corridor for cgate__cgatecron: max upper=$maxUpper, min lower=$minLower");
+            }
             
             // Агрегируем dataPoints на histStep перед расчетом аномалий
             $aggregatedOrig = [];

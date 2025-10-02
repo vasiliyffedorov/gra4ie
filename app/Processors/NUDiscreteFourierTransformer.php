@@ -4,8 +4,9 @@ declare(strict_types=1);
 namespace App\Processors;
 
 use App\Interfaces\LoggerInterface;
+use App\Processors\FourierTransformerInterface;
 
-class FourierTransformer implements FourierTransformerInterface
+class NUDiscreteFourierTransformer implements FourierTransformerInterface
 {
     private LoggerInterface $logger;
 
@@ -19,11 +20,15 @@ class FourierTransformer implements FourierTransformerInterface
         $coefficients = [];
         $N = count($values);
 
+        // Нормализуем времена относительно начала
+        $t0 = $times[0] ?? 0;
+        $normalizedTimes = array_map(fn($t) => $t - $t0, $times);
+
         for ($k = 0; $k <= $N / 2; $k++) {
             $sumReal = 0;
             $sumImag = 0;
             for ($n = 0; $n < $N; $n++) {
-                $angle = 2 * M_PI * $k * $n / $N;
+                $angle = 2 * M_PI * $k * $normalizedTimes[$n] / $totalDuration;
                 $sumReal += $values[$n] * cos($angle);
                 $sumImag -= $values[$n] * sin($angle);
             }
@@ -92,7 +97,14 @@ class FourierTransformer implements FourierTransformerInterface
     {
         $contributions = [];
         $T = $totalDuration;
-        $dt = $T / $numPoints;
+
+        // Вычисляем dt между точками
+        $dts = [];
+        for ($i = 0; $i < $numPoints - 1; $i++) {
+            $dts[] = $times[$i + 1] - $times[$i];
+        }
+        // Для последней точки, используем средний dt или предыдущий
+        $dts[] = $dts ? $dts[count($dts) - 1] : $T / $numPoints;
 
         foreach ($coefficients as $k => $coeff) {
             $amplitude = $coeff['amplitude'];
@@ -100,14 +112,14 @@ class FourierTransformer implements FourierTransformerInterface
             $sum = 0;
 
             for ($i = 0; $i < $numPoints; $i++) {
-                $t = $i * $dt;
+                $t = $times[$i] - $times[0]; // Нормализуем относительно начала
                 $angle = 2 * M_PI * $k * $t / $T + $phase;
                 $value = $amplitude * cos($angle);
-                $sum += abs($value) * $dt;
+                $sum += abs($value) * $dts[$i];
             }
 
             if ($k == 0) {
-                $sum = $amplitude * $T;
+                $sum = $amplitude * ($times[$numPoints - 1] - $times[0]);
             }
 
             $contributions[$k] = $sum;

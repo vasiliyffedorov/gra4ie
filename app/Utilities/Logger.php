@@ -75,7 +75,11 @@ class Logger implements LoggerInterface {
             $message
         );
 
-        file_put_contents($this->filePath, $entry, FILE_APPEND | LOCK_EX);
+        $flags = FILE_APPEND;
+        if (!str_starts_with($this->filePath, 'php://')) {
+            $flags |= LOCK_EX;
+        }
+        file_put_contents($this->filePath, $entry, $flags);
     }
 
     // PSR-3 methods

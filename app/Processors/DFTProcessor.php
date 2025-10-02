@@ -6,12 +6,12 @@ namespace App\Processors;
 use App\Interfaces\DFTProcessorInterface;
 use App\Interfaces\LoggerInterface;
 use App\Utilities\Logger;
-use App\Processors\FourierTransformer;
+use App\Processors\NUDiscreteFourierTransformer;
 
 class DFTProcessor implements DFTProcessorInterface {
     private array $config;
     private LoggerInterface $logger;
-    private FourierTransformer $fourierTransformer;
+    private NUDiscreteFourierTransformer $fourierTransformer;
 
     public function __construct(array $config, Logger $logger) {
         if (!isset($config['corrdor_params']['step']) || !isset($config['corrdor_params']['max_harmonics']) || !isset($config['corrdor_params']['use_common_trend'])) {
@@ -19,7 +19,7 @@ class DFTProcessor implements DFTProcessorInterface {
         }
         $this->config = $config;
         $this->logger = $logger;
-        $this->fourierTransformer = new \App\Processors\FourierTransformer($logger);
+        $this->fourierTransformer = new NUDiscreteFourierTransformer($logger);
     }
 
     /**
@@ -68,8 +68,9 @@ class DFTProcessor implements DFTProcessorInterface {
         $normalizedUpper = $this->normalizeData($upperValues, $times, $upperTrend);
         $normalizedLower = $this->normalizeData($lowerValues, $times, $lowerTrend);
 
-        $upperCoefficients = $this->fourierTransformer->calculateDFT($normalizedUpper, $maxHarmonics, $totalDuration, $numPoints);
-        $lowerCoefficients = $this->fourierTransformer->calculateDFT($normalizedLower, $maxHarmonics, $totalDuration, $numPoints);
+        $upperCoefficients = $this->fourierTransformer->calculateDFT($normalizedUpper, $times, $maxHarmonics, $totalDuration, $numPoints);
+        $lowerCoefficients = $this->fourierTransformer->calculateDFT($normalizedLower, $times, $maxHarmonics, $totalDuration, $numPoints);
+        $this->logger->info("DFT calculated: upper coefficients=" . count($upperCoefficients) . ", lower coefficients=" . count($lowerCoefficients));
 
         return [
             'upper' => [
