@@ -325,6 +325,33 @@ if ($method==='POST' && $path==='/api/v1/query_range') {
     exit;
 }
 
+// POST /api/ds/query
+if ($method==='POST' && $path==='/api/ds/query') {
+    $body = file_get_contents('php://input');
+    $data = json_decode($body, true);
+    if (!$data) {
+        jsonError('Invalid JSON', 400);
+    }
+
+    // Проксировать к Grafana
+    $url = $currentInstance['url'] . '/api/ds/query';
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Authorization: Bearer ' . $currentInstance['token'],
+        'Content-Type: application/json'
+    ]);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    http_response_code($code);
+    echo $response;
+    exit;
+}
+
 // всё остальное 404
 jsonError('Not found', 404);
 ?>

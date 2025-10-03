@@ -196,6 +196,11 @@ class SQLiteCacheManager implements CacheManagerInterface
         return $this->grafanaInstanceCache->getInstanceByUrl($url);
     }
 
+    public function getGrafanaInstanceById(int $id): ?array
+    {
+        return $this->grafanaInstanceCache->getInstanceById($id);
+    }
+
     // Grafana individual metrics cache
     public function saveGrafanaIndividualMetric(int $instanceId, string $metricKey, array $metricData): bool
     {

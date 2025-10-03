@@ -134,4 +134,34 @@ class GrafanaInstanceCache
             return null;
         }
     }
+
+    public function getInstanceById(int $id): ?array
+    {
+        $db = $this->dbManager->getDb();
+        try {
+            $stmt = $db->prepare("SELECT id, name, url, token, blacklist_uids, created_at FROM grafana_instances WHERE id = :id LIMIT 1");
+            $stmt->execute([':id' => $id]);
+            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+            if ($row) {
+                $blacklistUids = json_decode($row['blacklist_uids'], true);
+                if (json_last_error() === JSON_ERROR_NONE) {
+                    $this->logger->info("Loaded blacklist_uids from DB for ID {$id}: " . json_encode($blacklistUids));
+                    return [
+                        'id' => (int)$row['id'],
+                        'name' => $row['name'],
+                        'url' => $row['url'],
+                        'token' => $row['token'],
+                        'blacklist_uids' => $blacklistUids,
+                        'created_at' => $row['created_at']
+                    ];
+                } else {
+                    $this->logger->error("Failed to decode blacklist_uids for ID {$id}: " . $row['blacklist_uids']);
+                }
+            }
+            return null;
+        } catch (\PDOException $e) {
+            $this->logger->error("Ошибка загрузки экземпляра Grafana по ID: " . $e->getMessage());
+            return null;
+        }
+    }
 }

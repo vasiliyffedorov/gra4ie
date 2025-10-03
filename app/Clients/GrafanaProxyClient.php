@@ -29,11 +29,10 @@ class GrafanaProxyClient implements GrafanaClientInterface
         ?CacheManagerInterface $cacheManager = null
     ) {
         $this->instanceId = $instance['id'];
-        $this->grafanaUrl = rtrim($instance['url'], '/');
-        $this->apiToken   = $instance['token'];
         $this->logger     = $logger;
-        $this->blacklistDatasourceIds = $instance['blacklist_uids'] ?? []; // Initialize blacklist
         $this->cacheManager = $cacheManager;
+
+        $this->loadInstanceData();
         $this->headers    = [
             "Authorization: Bearer {$this->apiToken}",
             'Content-Type: application/json',
@@ -44,7 +43,22 @@ class GrafanaProxyClient implements GrafanaClientInterface
     }
 
     /**
-     * Возвращает перечень доступных “metrics” (dashboard__panel ключи).
+     * Загружает данные инстанса из базы данных.
+     */
+    private function loadInstanceData(): void
+    {
+        $instanceData = $this->cacheManager->getGrafanaInstanceById($this->instanceId);
+        if (!$instanceData) {
+            $this->logger->error("Не удалось загрузить данные инстанса Grafana с ID {$this->instanceId}");
+            throw new \Exception("Instance data not found for ID {$this->instanceId}");
+        }
+        $this->grafanaUrl = rtrim($instanceData['url'], '/');
+        $this->apiToken   = $instanceData['token'];
+        $this->blacklistDatasourceIds = $instanceData['blacklist_uids'];
+    }
+
+    /**
+     * Возвращает перечень доступных "metrics" (dashboard__panel ключи).
      * (вызывается из index.php для /api/v1/labels и /api/v1/label/__name__/values)
      */
     public function getMetricNames(): array
@@ -229,7 +243,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
                 }
                 $panelId    = (string)$p['id'];
                 $panelTitle = $p['title'] ?: "Panel_$panelId";
-                $key = "{$title}__{$panelTitle}";
+                $key = "{$title}, {$panelTitle}";
                 $this->metricsCache[$key] = [
                     'dashboard_uid' => $uid,
                     'panel_id'      => $panelId,
@@ -352,7 +366,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
         foreach ($results as $frameSet) {
             foreach ($frameSet['frames'] as $frame) {
                 if (!isset($frame['data']['values'][0]) || !isset($frame['schema']['fields'])) {
-                    $this->logger->warning("Skipping frame without times or fields for metric {$info['dash_title']}__{$info['panel_title']}");
+                    $this->logger->warning("Skipping frame without times or fields for metric {$info['dash_title']}, {$info['panel_title']}");
                     continue;
                 }
                 $times  = $frame['data']['values'][0];
@@ -363,7 +377,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
                     }
                     $vals   = $frame['data']['values'][$i];
                     $labels = $fields[$i]['labels'] ?? [];
-                    $labels['__name__'] = $info['dash_title'] . '__' . $info['panel_title'];
+                    $labels['__name__'] = $info['dash_title'] . ', ' . $info['panel_title'];
                     $labels['panel_url'] = sprintf(
                         '%s/d/%s/%s?viewPanel=%s',
                         $this->grafanaUrl,

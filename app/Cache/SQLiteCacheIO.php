@@ -487,10 +487,19 @@ class SQLiteCacheIO
     {
         $db = $this->dbManager->getDb();
         try {
-            $stmt = $db->prepare("SELECT max_period_days FROM metrics_max_periods WHERE metric_key = :key LIMIT 1");
+            $stmt = $db->prepare("SELECT max_period_days, updated_at FROM metrics_max_periods WHERE metric_key = :key LIMIT 1");
             $stmt->execute([':key' => $metricKey]);
             $row = $stmt->fetch(\PDO::FETCH_ASSOC);
-            return $row ? (float)$row['max_period_days'] : null;
+            if (!$row) {
+                return null;
+            }
+            $ttl = 86400; // 1 day
+            $age = time() - strtotime($row['updated_at']);
+            if ($age > $ttl) {
+                $this->logger->debug("Max period cache expired for $metricKey, age $age > $ttl");
+                return null;
+            }
+            return (float)$row['max_period_days'];
         } catch (\PDOException $e) {
             $this->logger->error("Failed to load max period: " . $e->getMessage());
             return null;

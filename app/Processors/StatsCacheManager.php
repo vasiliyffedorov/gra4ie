@@ -81,6 +81,12 @@ class StatsCacheManager {
             return $cached;
         }
 
+        // Если кеш существует, пропустить оптимизацию периода и fetch, использовать кеш
+        if ($cached !== null && !$this->cacheManager->shouldRecreateCache($query, $labelsJson, $currentConfig)) {
+            $this->logger->info("Cache HIT: skipping period optimization and fetch for {$query}, {$labelsJson}");
+            return $this->buildCorridorAndGetPayload($query, $labelsJson, $historyData, $currentConfig, 0); // optimalPeriodDays не важен, так как кеш используется
+        }
+
         // L1 cache integration
         $requestMd5 = $this->client->getNormalizedRequestMd5($query) ?: '';
         $l1 = $this->cacheManager->loadMetricsCacheL1($query, $labelsJson);
@@ -101,7 +107,7 @@ class StatsCacheManager {
         $this->dataProcessor->updateConfig($currentConfig);
         $this->anomalyDetector->updateConfig($currentConfig);
         $this->optimizer->updateConfig($currentConfig);
-        
+
         // Determine optimal period first
         $metricKey = $query . '|' . $labelsJson;
         $l1Data = $this->cacheManager->loadMetricsCacheL1($query, $labelsJson);
@@ -127,6 +133,7 @@ class StatsCacheManager {
                 $needFetch = true;
             }
         }
+        $longGrouped = [];
         if ($needFetch) {
             $periodSec = (int)($maxPeriodDays * 86400);
             $histEnd = time();
@@ -136,6 +143,19 @@ class StatsCacheManager {
             $longGrouped = $this->dataProcessor->groupData($longRaw);
             $fetchedData = $longGrouped[$labelsJson] ?? [];
             $this->logger->info("Fetched adaptive history for $metricKey: $maxPeriodDays days, " . count($fetchedData) . " points");
+
+            // Process all metrics from the fetch result
+            foreach ($longGrouped as $otherLabelsJson => $otherFetchedData) {
+                if ($otherLabelsJson === $labelsJson) {
+                    continue; // Skip current metric, will be processed below
+                }
+                $otherCached = $this->cacheManager->loadFromCache($query, $otherLabelsJson);
+                if ($otherCached === null) {
+                    $this->logger->info("Processing additional metric from fetch: {$query}, {$otherLabelsJson}");
+                    $this->buildCorridorAndSave($query, $otherLabelsJson, $otherFetchedData, $currentConfig, $maxPeriodDays, $l1Status, $l1, 8, null, false);
+                }
+            }
+
             if (empty($historyData)) {
                 $historyData = $fetchedData;
                 $this->logger->info("Using fetched data as historyData: " . count($historyData) . " points");
@@ -147,6 +167,79 @@ class StatsCacheManager {
                 usort($historyData, fn($a, $b) => $a['time'] <=> $b['time']);
                 $addedPoints = count($historyData) - $originalCount;
                 $this->logger->info("Merged historyData: original {$originalCount} points, added {$addedPoints} points, total " . count($historyData));
+            }
+        }
+
+        // Build corridor for the current metric
+        return $this->buildCorridorAndGetPayload($query, $labelsJson, $historyData, $currentConfig, $maxPeriodDays, $l1Status, $l1);
+    }
+
+    /**
+     * Строит коридор, гармоники, аномалии и сохраняет в кеш для заданной метрики.
+     *
+     * @param string $query Запрос для Grafana
+     * @param string $labelsJson JSON-строка с лейблами метрики
+     * @param array $historyData Исторические данные: [['time' => int, 'value' => float], ...]
+     * @param array $currentConfig Текущая конфигурация
+     * @param float $optimalPeriodDays Оптимальный период в днях
+     * @param string $l1Status Статус L1 кеша
+     * @param array $l1 Данные L1 кеша
+     * @param int $k Коэффициент масштабирования
+     * @param float|null $factor Фактор масштабирования
+     * @param bool $scaleCorridor Флаг масштабирования коридора
+     */
+    private function buildCorridorAndSave(
+        string $query,
+        string $labelsJson,
+        array $historyData,
+        array $currentConfig,
+        float $optimalPeriodDays,
+        string $l1Status,
+        ?array $l1,
+        int $k,
+        ?float $factor,
+        bool $scaleCorridor
+    ): void {
+        $this->buildCorridorAndGetPayload($query, $labelsJson, $historyData, $currentConfig, $optimalPeriodDays, $l1Status, $l1, $k, $factor, $scaleCorridor);
+    }
+
+    /**
+     * Строит коридор, гармоники, аномалии, сохраняет в кеш и возвращает payload.
+     *
+     * @param string $query Запрос для Grafana
+     * @param string $labelsJson JSON-строка с лейблами метрики
+     * @param array $historyData Исторические данные: [['time' => int, 'value' => float], ...]
+     * @param array $currentConfig Текущая конфигурация
+     * @param float $optimalPeriodDays Оптимальный период в днях
+     * @return array Payload
+     */
+    private function buildCorridorAndGetPayload(
+        string $query,
+        string $labelsJson,
+        array $historyData,
+        array $currentConfig,
+        float $optimalPeriodDays,
+        ?string $l1Status = null,
+        ?array $l1 = null,
+        int $k = 8,
+        ?float $factor = null,
+        bool $scaleCorridor = false
+    ): array {
+        // L1 cache integration for this metric (skip if cache HIT)
+        if ($l1Status === null || $l1 === null) {
+            $requestMd5 = $this->client->getNormalizedRequestMd5($query) ?: '';
+            $l1 = $this->cacheManager->loadMetricsCacheL1($query, $labelsJson);
+            $l1Status = 'MISS';
+            if ($l1) {
+                if ($l1['request_md5'] === $requestMd5) {
+                    $l1Status = 'HIT';
+                    $this->logger->info("L1 HIT: query={$query}, labels={$labelsJson}, md5={$requestMd5}, period={$l1['optimal_period_days']}, scale={$l1['scale_corridor']}, k={$l1['k']}, factor={$l1['factor']}");
+                } else {
+                    $l1Status = 'STALE';
+                    $this->logger->info("L1 STALE: query={$query}, labels={$labelsJson}, old={$l1['request_md5']}, new={$requestMd5}, action=force_recalc");
+                }
+            } else {
+                $this->logger->info("L1 MISS: query={$query}, labels={$labelsJson}, md5={$requestMd5}");
             }
         }
 
@@ -176,28 +269,64 @@ class StatsCacheManager {
             if ($optimalPeriodDays !== null && $optimalPeriodDays <= 7) {
                 $this->logger->warning("Fallback triggered for short period {$optimalPeriodDays} days due to insufficient data for {$labelsJson}");
             }
-            if (!empty($liveData)) {
-                $values = array_column($liveData, 'value');
-                $mean = array_sum($values) / count($values);
-                $variance = array_sum(array_map(fn($v) => pow($v - $mean, 2), $values)) / count($values);
-                $stddev = sqrt($variance);
-                $factor = $currentConfig['corrdor_params']['fallback_stddev_factor'] ?? 2.0;
-                $halfWidth = $stddev * $factor;
-                $payload = $this->buildPlaceholder($query, $labelsJson, $longStart, $longEnd, $longStep);
-                $payload['meta']['orig_stddev'] = $stddev;
-                $payload['dft_upper']['trend']['intercept'] = $mean + $halfWidth;
-                $payload['dft_lower']['trend']['intercept'] = $mean - $halfWidth;
-                $payload['meta']['fallback_live'] = true;
-                $this->logger->info("Fallback corridor from live for $query: mean $mean ± $halfWidth (stddev $stddev)");
-                return $payload;
-            } else {
-                $this->logger->warning("No live data for fallback, placeholder");
-                return $this->buildPlaceholder($query, $labelsJson, $longStart, $longEnd, $longStep);
-            }
+            // For additional metrics, we don't have liveData, so build placeholder
+            $this->logger->warning("No live data for fallback, placeholder for {$labelsJson}");
+            $payload = $this->buildPlaceholder($query, $labelsJson, $longStart, $longEnd, $longStep);
+            $this->cacheManager->saveToCache($query, $labelsJson, $payload, $currentConfig);
+            return $payload;
         }
 
-        // Определение периода: использовать из L1 если HIT, иначе maxPeriodDays из optimizer
-        $optimalPeriodDays = null;
+        // Проверить необходимость пересоздания кеша DFT
+        $cached = $this->cacheManager->loadFromCache($query, $labelsJson);
+        if ($cached !== null && !$this->cacheManager->shouldRecreateCache($query, $labelsJson, $currentConfig)) {
+            $this->logger->info("Cache HIT: using cached DFT for corridor restoration on current period for {$query}, {$labelsJson}");
+            // Восстановить коридор на текущий период запроса
+            $meta = $cached['meta'];
+            $meta['dataStart'] = $longStart;
+            $meta['totalDuration'] = $longEnd - $longStart;
+            $meta['created_at'] = time(); // обновить время
+            $meta['dft_rebuild_count'] = ($meta['dft_rebuild_count'] ?? 0) + 1; // возможно не увеличивать, но для совместимости
+
+            $upperSeries = $this->dftProcessor->restoreFullDFT(
+                $cached['dft_upper']['coefficients'],
+                $longStart, $longEnd, $longStep,
+                $meta, $cached['dft_upper']['trend']
+            );
+            $lowerSeries = $this->dftProcessor->restoreFullDFT(
+                $cached['dft_lower']['coefficients'],
+                $longStart, $longEnd, $longStep,
+                $meta, $cached['dft_lower']['trend']
+            );
+
+            // Рассчитать статистики аномалий на текущих данных
+            $stats = $this->anomalyDetector->calculateAnomalyStats(
+                $historyData, $upperSeries, $lowerSeries,
+                $currentConfig['corrdor_params']['default_percentiles'],
+                false, // raw
+                true, // isHistorical
+                $longStep // actual step for hist
+            );
+            $meta['anomaly_stats'] = $stats;
+
+            // Вычислить сдвиги
+            [$upperShift, $lowerShift] = $this->calculateShifts(
+                $historyData, [
+                    'upper' => $cached['dft_upper'],
+                    'lower' => $cached['dft_lower']
+                ], $longStart, $longEnd, $longStep, $meta, $currentConfig
+            );
+
+            return [
+                'meta' => $meta,
+                'dft_upper' => $cached['dft_upper'],
+                'dft_lower' => $cached['dft_lower'],
+                'upper_shift' => $upperShift,
+                'lower_shift' => $lowerShift,
+            ];
+        }
+        $this->logger->info("Cache MISS: recalculating corridor for {$query}, {$labelsJson}");
+
+        // Определение периода: использовать из L1 если HIT, иначе optimalPeriodDays
         $originalHistoryData = $historyData;
         $originalLongStart = $longStart;
         $originalLongEnd = $longEnd;
@@ -230,11 +359,10 @@ class StatsCacheManager {
                 }
             }
         } else {
-            $optimalPeriodDays = $maxPeriodDays;
-            $this->logger->info("Using maxPeriodDays from optimizer for {$labelsJson}: {$maxPeriodDays} days");
+            $this->logger->info("Using optimalPeriodDays for {$labelsJson}: {$optimalPeriodDays} days");
 
-            // Подрезать historyData на maxPeriodDays
-            $fullPeriodSec = (int)($maxPeriodDays * 86400);
+            // Подрезать historyData на optimalPeriodDays
+            $fullPeriodSec = (int)($optimalPeriodDays * 86400);
             $longEndNew = $originalLongEnd;
             $cutStart = $longEndNew - $fullPeriodSec;
             $this->logger->info("Optimizer trimming debug: longStart={$originalLongStart}, longEnd={$originalLongEnd}, fullPeriodSec={$fullPeriodSec}, cutStart={$cutStart}, originalCount=" . count($originalHistoryData));
@@ -243,7 +371,7 @@ class StatsCacheManager {
             $this->logger->info("After optimizer trimming: count=" . count($historyData));
             if (count($historyData) < $minPts) {
                 $this->logger->warning("Недостаточно данных после optimizer подрезки, fallback на preprocessed без подрезки для {$labelsJson}");
-                if ($maxPeriodDays <= 7) {
+                if ($optimalPeriodDays <= 7) {
                     $this->logger->warning("Fallback after short period optimizer trimming for {$labelsJson}");
                 }
                 $historyData = $originalHistoryData;
@@ -253,8 +381,8 @@ class StatsCacheManager {
                 $range = $this->dataProcessor->getActualDataRange($historyData);
                 $longStart = $range['start'];
                 $longEnd = $range['end'];
-                $this->logger->info("Optimizer подрезка для {$labelsJson}: период {$maxPeriodDays} дней, точек с " . count($originalHistoryData) . " до " . count($historyData));
-                if ($maxPeriodDays <= 7) {
+                $this->logger->info("Optimizer подрезка для {$labelsJson}: период {$optimalPeriodDays} дней, точек с " . count($originalHistoryData) . " до " . count($historyData));
+                if ($optimalPeriodDays <= 7) {
                     $this->logger->info("Short period (<=7d) optimizer trimming applied for {$labelsJson}");
                 }
             }
@@ -269,13 +397,6 @@ class StatsCacheManager {
             $currentConfig['corrdor_params']['min_data_points'] = $optimalPeriodDays <= 7 ? 5 : 50;
             $this->logger->info("Adaptive min_data_points for period {$optimalPeriodDays} days: " . $currentConfig['corrdor_params']['min_data_points']);
         }
-
-        // Проверить необходимость пересоздания кеша DFT
-        if ($cached !== null && !$this->cacheManager->shouldRecreateCache($query, $labelsJson, $currentConfig)) {
-            $this->logger->info("Cache HIT: returning cached corridor for {$query}, {$labelsJson}");
-            return $cached;
-        }
-        $this->logger->info("Cache MISS: recalculating corridor for {$query}, {$labelsJson}");
 
         // Автоматическое определение необходимости масштабирования (обобщённый алгоритм по последним 100 ненулевым точкам)
         // 1) Берём последние 100 ненулевых/не-NaN точек из historyData на шаге S = $longStep

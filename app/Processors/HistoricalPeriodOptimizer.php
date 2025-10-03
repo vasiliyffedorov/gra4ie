@@ -31,8 +31,8 @@ class HistoricalPeriodOptimizer
         $this->client = $client;
         $this->dataProcessor = $dataProcessor;
 
-        if (!isset($config['corrdor_params']['step']) || !isset($config['corrdor_params']['test_periods']) || !isset($config['corrdor_params']['fetch_timeout_sec'])) {
-            throw new \InvalidArgumentException('Config must contain step, test_periods, fetch_timeout_sec');
+        if (!isset($config['corrdor_params']['step']) || !isset($config['corrdor_params']['fetch_timeout_sec'])) {
+            throw new \InvalidArgumentException('Config must contain step, fetch_timeout_sec');
         }
     }
 
@@ -45,38 +45,14 @@ class HistoricalPeriodOptimizer
             return $maxPeriodDays;
         }
 
-        // Parse test_periods, e.g. "1m,5m,10m,30m,1h,6h,1d,7d,30d,90d"
-        $testPeriodsStr = $this->config['corrdor_params']['test_periods'];
-        if (is_array($testPeriodsStr)) {
-            $testPeriodsStr = implode(',', $testPeriodsStr);
-            $this->logger->debug("test_periods was array, joined to string");
-        }
-        $periodStrs = explode(',', $testPeriodsStr);
-        $testPeriodsSec = [];
-        foreach ($periodStrs as $pStr) {
-            $pStr = trim($pStr);
-            if (str_ends_with($pStr, 'm')) {
-                $min = (int)substr($pStr, 0, -1);
-                $testPeriodsSec[] = $min * 60;
-            } elseif (str_ends_with($pStr, 'h')) {
-                $hr = (int)substr($pStr, 0, -1);
-                $testPeriodsSec[] = $hr * 3600;
-            } elseif (str_ends_with($pStr, 'd')) {
-                $day = (int)substr($pStr, 0, -1);
-                $testPeriodsSec[] = $day * 86400;
-            } else {
-                $this->logger->warning("Invalid period string: $pStr");
-            }
-        }
+        // Fixed test periods in seconds: 1m,5m,10m,30m,1h,6h,1d,2d,7d,30d,60d
+        $testPeriodsSec = [60, 300, 600, 1800, 3600, 21600, 86400, 172800, 604800, 2592000, 5184000];
 
         $now = time();
         $prevPeriodSec = 0;
         $datasourceType = 'unknown';
-        $lastDataCount = 0;
 
         foreach ($testPeriodsSec as $periodSec) {
-            if ($periodSec <= $prevPeriodSec) continue; // Skip if not increasing
-
             PerformanceMonitor::start('historical_fetch_test_' . ($periodSec / 86400) . 'd');
 
             $histStart = $now - $periodSec;
@@ -85,29 +61,19 @@ class HistoricalPeriodOptimizer
 
             $timeTaken = PerformanceMonitor::end('historical_fetch_test_' . ($periodSec / 86400) . 'd');
 
-            if ($timeTaken > $this->config['corrdor_params']['fetch_timeout_sec']) {
-                $this->logger->info("Fetch timeout for period $periodSec sec ($timeTaken s > {$this->config['corrdor_params']['fetch_timeout_sec']}s), stop at prev $prevPeriodSec sec");
+            if ($timeTaken >= 5) {
+                $this->logger->info("Fetch time >= 5s for period $periodSec sec ($timeTaken s), stop at prev $prevPeriodSec sec");
                 break;
             }
 
             if (empty($rawData)) {
-                $this->logger->info("Empty data for period $periodSec sec (EOF/retention), stop at prev $prevPeriodSec sec");
-                break;
-            }
-
-            $grouped = $this->dataProcessor->groupData($rawData);
-            $data = $grouped[$labelsJson] ?? [];
-            $dataCount = count($data);
-
-            if ($dataCount == 0 || ($dataCount - $lastDataCount < ($this->config['corrdor_params']['min_points_increment'] ?? 5) && $dataCount > 20)) {
-                $this->logger->info("No significant new data for period $periodSec sec (increment " . ($dataCount - $lastDataCount) . " < " . ($this->config['corrdor_params']['min_points_increment'] ?? 5) . ", total $dataCount >20), stop at prev $prevPeriodSec sec");
+                $this->logger->info("Empty data for period $periodSec sec, stop at prev $prevPeriodSec sec");
                 break;
             }
 
             $datasourceType = $this->client->getLastDataSourceType();
             $prevPeriodSec = $periodSec;
-            $lastDataCount = $dataCount;
-            $this->logger->debug("Test fetch for $periodSec sec successful: $dataCount points in $timeTaken s");
+            $this->logger->debug("Test fetch for $periodSec sec successful: in $timeTaken s");
         }
 
         if ($prevPeriodSec == 0) {

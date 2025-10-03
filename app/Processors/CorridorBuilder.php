@@ -226,8 +226,8 @@ class CorridorBuilder
             $belowConcerns = $this->anomalyDetector->calculateIntegralMetric(
                 $currStats['below'], $cached['meta']['anomaly_stats']['below'] ?? []
             );
-            $aboveC = $aboveConcerns['total_concern'];
-            $belowC = $belowConcerns['total_concern'];
+            $aboveC = $aboveConcerns['total_concern'] / 10;
+            $belowC = $belowConcerns['total_concern'] / 10;
             $this->logger->debug("CorridorBuilder: anomaly_concern_above = $aboveC, anomaly_concern_below = $belowC");
    
             $aboveSums = $this->anomalyDetector->calculateIntegralMetricSum(
@@ -236,8 +236,8 @@ class CorridorBuilder
             $belowSums = $this->anomalyDetector->calculateIntegralMetricSum(
                 $currStats['below'], $cached['meta']['anomaly_stats']['below'] ?? [], $wsize
             );
-            $aboveS = $aboveSums['total_concern_sum'];
-            $belowS = $belowSums['total_concern_sum'];
+            $aboveS = $aboveSums['total_concern_sum'] / 10;
+            $belowS = $belowSums['total_concern_sum'] / 10;
    
             // Add separate concerns
             $item['anomaly_concern_duration_above'] = $aboveConcerns['duration_concern'];
