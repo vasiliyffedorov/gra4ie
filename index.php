@@ -94,6 +94,15 @@ function nest(array $flatEntries): array {
 
 $config = nest($flatIni);
 
+// Извлечение allowed_ips из конфига
+$allowedIps = [];
+if (isset($config['allowed_ips']) && is_array($config['allowed_ips'])) {
+    $allowedIps = array_values($config['allowed_ips']);
+}
+if (empty($allowedIps)) {
+    $allowedIps = ['127.0.0.1', '81.163.20.183'];
+}
+
 // ENV override (для совместимости, но параметры устарели)
 $envUrl = getenv('GRAFANA_URL');
 if ($envUrl !== false && $envUrl !== '') {
@@ -104,6 +113,18 @@ if ($envToken !== false && $envToken !== '') {
     $config['grafana_api_token'] = $envToken;
 }
 
+$container = new \App\DI\Container($config);
+$logger = $container->get(\App\Interfaces\LoggerInterface::class);
+
+// Проверка IP
+$clientIp = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'];
+$logger->info("Client IP: $clientIp");
+if (!in_array($clientIp, $allowedIps)) {
+    $logger->info("IP $clientIp is forbidden, returning 403");
+    jsonError('Forbidden', 403);
+}
+$logger->info("IP $clientIp is allowed, proceeding");
+
 // Валидация конфига
 $requiredKeys = ['log_file'];
 foreach ($requiredKeys as $key) {
@@ -112,8 +133,6 @@ foreach ($requiredKeys as $key) {
     }
 }
 
-$container = new \App\DI\Container($config);
-$logger = $container->get(\App\Interfaces\LoggerInterface::class);
 $cacheManager = $container->get(\App\Interfaces\CacheManagerInterface::class);
 
 function extractGrafanaInstanceData(\App\Interfaces\CacheManagerInterface $cacheManager, \App\Interfaces\LoggerInterface $logger): ?array {
@@ -260,7 +279,7 @@ if ($method==='GET' && $path==='/api/v1/status/buildinfo') {
     jsonSuccess([
         'status' => 'success',
         'data' => [
-            'version' => '2.0.0',
+            'version' => '1.0.0',
             'revision' => 'unknown',
             'branch' => 'unknown',
             'buildUser' => 'unknown',
