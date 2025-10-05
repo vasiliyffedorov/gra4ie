@@ -87,59 +87,24 @@ class GrafanaProxyClient implements GrafanaClientInterface
 
         $info = $this->metricsCache[$metricName];
 
-        // 1) Получаем JSON дашборда (с in-request кэшем)
-        $dashData = $this->fetchDashboardData($info['dashboard_uid']);
-        if (!$dashData) {
-            $this->logger->error("Не удалось получить JSON дашборда {$info['dashboard_uid']}");
-            return [];
-        }
-        $panels   = $dashData['dashboard']['panels'] ?? [];
-        $target   = null;
-        foreach ($panels as $p) {
-            if ((string)$p['id'] === $info['panel_id']) {
-                $target = $p;
-                break;
-            }
-        }
+        // Определяем тип datasource из кеша
+        $this->lastDataSourceType = strtolower($info['datasource']['type'] ?? 'unknown');
 
-        if (!$target || empty($target['targets'])) {
-            $this->logger->warning("Панель {$info['panel_id']} не содержит targets");
-            return [];
-        }
-
-        // 2) Определяем тип datasource из первого target
-        if (isset($target['targets'][0]['datasource'])) {
-            $ds = $target['targets'][0]['datasource'];
-            $this->lastDataSourceType = strtolower($ds['type'] ?? $ds['name'] ?? 'unknown');
-        } else {
-            $this->lastDataSourceType = 'unknown';
-        }
-
-        // 3) Формируем запрос к /api/ds/query
+        // Формируем запрос к /api/ds/query с substituted_query
         $fromMs = $start * 1000;
         $toMs   = $end   * 1000;
         $stepMs = (int)($step * 1000);
 
-        $queries = [];
-        foreach ($target['targets'] as $t) {
-            $q = [
-                'refId'         => $t['refId']         ?? 'A',
-                'datasource'    => $t['datasource']    ?? [],
-                'format'        => $t['format']        ?? 'time_series',
-                'intervalMs'    => $stepMs,
-                'maxDataPoints' => ceil(($toMs - $fromMs) / $stepMs),
-            ];
-            foreach ($t as $k => $v) {
-                if (!isset($q[$k])) {
-                    $q[$k] = $v;
-                }
-            }
-            $queries[] = $q;
-        }
-        if (empty($queries)) {
-            $this->logger->error("Нет targets для метрики $metricName – возвращаем пустой результат");
-            return [];
-        }
+        $q = [
+            'refId'         => 'A',
+            'datasource'    => $info['datasource'],
+            'format'        => 'time_series',
+            'intervalMs'    => $stepMs,
+            'maxDataPoints' => ceil(($toMs - $fromMs) / $stepMs),
+            'expr'          => $info['substituted_query'], // Используем подставленный запрос
+        ];
+
+        $queries = [$q];
 
         $body = json_encode([
             'from'    => (string)$fromMs,
@@ -220,36 +185,46 @@ class GrafanaProxyClient implements GrafanaClientInterface
         foreach ($dashboards as $dash) {
             $uid   = $dash['uid'];
             $title = $dash['title'] ?: $uid;
-            $dashJson = $this->httpRequest('GET', "{$this->grafanaUrl}/api/dashboards/uid/$uid");
-            if (!$dashJson) {
-                $this->logger->warning("Не удалось загрузить дашборд $uid");
+
+            // Запуск скрипта grafana_variables.php для получения комбинаций
+            $command = "php grafana_variables.php --url='{$this->grafanaUrl}' --token='{$this->apiToken}' --dashboard=$uid";
+            $scriptOutput = shell_exec($command);
+            if ($scriptOutput === null) {
+                $this->logger->warning("Не удалось выполнить скрипт для дашборда $uid");
                 continue;
             }
-            $dashData = json_decode($dashJson, true);
-            $panels = $dashData['dashboard']['panels'] ?? [];
-            foreach ($panels as $p) {
-                if (empty($p['id'])) {
-                    continue;
+            $output = json_decode($scriptOutput, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                $this->logger->warning("Ошибка парсинга JSON для дашборда $uid: " . json_last_error_msg());
+                continue;
+            }
+
+            // Обработка вывода скрипта
+            foreach ($output as $panelId => $panelData) {
+                $panelTitle = $panelData['title'];
+                foreach ($panelData['queries'] as $queryData) {
+                    $datasource = $queryData['datasource'];
+                    // Check if the datasource is in the blacklist
+                    $datasourceId = $datasource['uid'] ?? null;
+                    if ($datasourceId && in_array($datasourceId, $this->blacklistDatasourceIds)) {
+                        $this->logger->info("Пропущена панель {$panelId} в дашборде $uid: datasource $datasourceId в черном списке");
+                        continue;
+                    }
+                    foreach ($queryData['combinations'] as $combData) {
+                        $combination = $combData['combination'];
+                        $substituted_query = $combData['substituted_query'];
+                        $key = "{$title}, {$panelTitle}:" . json_encode($combination);
+                        $this->metricsCache[$key] = [
+                            'dashboard_uid' => $uid,
+                            'panel_id'      => $panelId,
+                            'dash_title'    => $title,
+                            'panel_title'   => $panelTitle,
+                            'combination'   => $combination,
+                            'substituted_query' => $substituted_query,
+                            'datasource'    => $datasource,
+                        ];
+                    }
                 }
-                if (empty($p['targets'])) {
-                    $this->logger->debug("Пропущена панель {$p['id']} в дашборде $uid: без targets");
-                    continue;
-                }
-                // Check if the panel's datasource is in the blacklist
-                $datasourceId = $p['targets'][0]['datasource']['uid'] ?? null;
-                if ($datasourceId && in_array($datasourceId, $this->blacklistDatasourceIds)) {
-                    $this->logger->info("Пропущена панель {$p['id']} в дашборде $uid: datasource $datasourceId в черном списке");
-                    continue;
-                }
-                $panelId    = (string)$p['id'];
-                $panelTitle = $p['title'] ?: "Panel_$panelId";
-                $key = "{$title}, {$panelTitle}";
-                $this->metricsCache[$key] = [
-                    'dashboard_uid' => $uid,
-                    'panel_id'      => $panelId,
-                    'dash_title'    => $title,
-                    'panel_title'   => $panelTitle,
-                ];
             }
         }
 
@@ -414,43 +389,16 @@ class GrafanaProxyClient implements GrafanaClientInterface
 
         $info = $this->metricsCache[$metricName];
 
-        // Получаем JSON дашборда (с in-request кэшем)
-        $dashData = $this->fetchDashboardData($info['dashboard_uid']);
-        if (!$dashData) {
-            $this->logger->error("Не удалось получить JSON дашборда {$info['dashboard_uid']}");
-            return false;
-        }
-        $panels = $dashData['dashboard']['panels'] ?? [];
-        $targetPanel = null;
-        foreach ($panels as $p) {
-            if ((string)$p['id'] === $info['panel_id']) {
-                $targetPanel = $p;
-                break;
-            }
-        }
-
-        if (!$targetPanel || empty($targetPanel['targets'])) {
-            $this->logger->warning("Панель {$info['panel_id']} не найдена или без targets");
-            return false;
-        }
-
         // Для danger dashboard только Prometheus с expr
-        $dsType = $targetPanel['targets'][0]['datasource']['type'] ?? '';
+        $dsType = $info['datasource']['type'] ?? '';
         if ($dsType !== 'prometheus') {
             $this->logger->info("Danger dashboard только для Prometheus, пропуск $metricName (type: $dsType)");
             return false;
         }
 
-        // Ищем первый non-empty expr в targets
-        $originalExpr = '';
-        foreach ($targetPanel['targets'] as $t) {
-            if (!empty($t['expr'] ?? '')) {
-                $originalExpr = $t['expr'];
-                break;
-            }
-        }
+        $originalExpr = $info['substituted_query'];
         if (empty($originalExpr)) {
-            $this->logger->warning("Expr не найден в панели {$info['panel_id']} для создания danger dashboard, пропуск");
+            $this->logger->warning("Substituted query не найден для $metricName");
             return false;
         }
 
@@ -716,104 +664,14 @@ class GrafanaProxyClient implements GrafanaClientInterface
             return false;
         }
         $info = $this->metricsCache[$metricName];
-        $dashData = $this->fetchDashboardData($info['dashboard_uid']);
-        if (!$dashData) {
-            $this->logger->error("Не удалось получить JSON дашборда {$info['dashboard_uid']} для MD5");
-            return false;
-        }
-        $panels = $dashData['dashboard']['panels'] ?? [];
-        $targetPanel = null;
-        foreach ($panels as $p) {
-            if ((string)$p['id'] === $info['panel_id']) {
-                $targetPanel = $p;
-                break;
-            }
-        }
-        if (!$targetPanel || empty($targetPanel['targets'])) {
-            $this->logger->warning("Панель {$info['panel_id']} не найдена или без targets");
-            return false;
-        }
 
-        // Берем первый target как канонический
-        $t = $targetPanel['targets'][0];
-        $ds = $t['datasource'] ?? [];
-        $dsType = strtolower($ds['type'] ?? $ds['name'] ?? 'unknown');
-
-        // Общие поля
+        // Используем substituted_query как нормализованный запрос
         $core = [
-            'datasource' => [
-                'type' => $ds['type'] ?? null,
-                'uid'  => $ds['uid']  ?? null,
-            ],
+            'datasource' => $info['datasource'],
+            'expr' => $info['substituted_query'],
         ];
-        if (isset($t['editorMode'])) $core['editorMode'] = $t['editorMode'];
-        if (isset($t['queryType']))  $core['queryType']  = $t['queryType'];
 
-        // Специфика по источникам
-        if ($dsType === 'prometheus') {
-            if (isset($t['expr'])) $core['expr'] = $t['expr'];
-        } elseif ($dsType === 'elasticsearch') {
-            if (isset($t['query'])) $core['query'] = $t['query'];
-            if (isset($t['timeField'])) $core['timeField'] = $t['timeField'];
-            if (isset($t['bucketAggs']) && is_array($t['bucketAggs'])) {
-                $bucketAggs = $t['bucketAggs'];
-                // Удаляем volatile/id-поля
-                foreach ($bucketAggs as &$agg) {
-                    unset($agg['id'], $agg['$$hashKey']);
-                }
-                $core['bucketAggs'] = $bucketAggs;
-            }
-            if (isset($t['metrics']) && is_array($t['metrics'])) {
-                $metrics = [];
-                foreach ($t['metrics'] as $m) {
-                    $metrics[] = [
-                        'type' => $m['type'] ?? null,
-                        'params' => $m['params'] ?? [],
-                    ];
-                }
-                $core['metrics'] = $metrics;
-            }
-        } elseif ($dsType === 'vertamedia-clickhouse-datasource' || $dsType === 'clickhouse' || $dsType === 'grafana-clickhouse-datasource') {
-            if (!empty($t['rawSql'] ?? '')) {
-                $core['rawSql'] = $t['rawSql'];
-            } elseif (!empty($t['builderOptions'] ?? [])) {
-                $bo = $t['builderOptions'];
-                $core['builder'] = [
-                    'database' => $bo['database'] ?? null,
-                    'table' => $bo['table'] ?? null,
-                    'timeField' => $bo['timeField'] ?? null,
-                    'timeFieldType' => $bo['timeFieldType'] ?? null,
-                    'metrics' => [],
-                    'filters' => [],
-                    'groupBy' => $bo['groupBy'] ?? [],
-                    'orderBy' => $bo['orderBy'] ?? [],
-                    'mode' => $bo['mode'] ?? null,
-                    'selectedFormat' => $bo['selectedFormat'] ?? null,
-                    'queryType' => $t['queryType'] ?? null,
-                ];
-                if (!empty($bo['metrics'])) {
-                    foreach ($bo['metrics'] as $m) {
-                        $core['builder']['metrics'][] = [
-                            'aggregation' => $m['aggregation'] ?? null,
-                            'field' => $m['field'] ?? null,
-                        ];
-                    }
-                }
-                if (!empty($bo['filters'])) {
-                    foreach ($bo['filters'] as $f) {
-                        // исключаем временные фильтры
-                        if (($f['type'] ?? '') === 'time') continue;
-                        $core['builder']['filters'][] = [
-                            'key' => $f['key'] ?? null,
-                            'op'  => $f['op']  ?? null,
-                            'value' => $f['value'] ?? null,
-                        ];
-                    }
-                }
-            }
-        }
-
-        // Убираем volatile-поля верхнего уровня target (если вдруг попали)
+        // Убираем volatile-поля
         $this->stripVolatileFields($core, [
             'from','to','intervalMs','maxDataPoints','requestId','refId','hide','datasourceId'
         ]);
@@ -840,39 +698,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
 
         $info = $this->metricsCache[$metricName];
 
-        // Получаем JSON дашборда (с in-request кэшем)
-        $dashData = $this->fetchDashboardData($info['dashboard_uid']);
-        if (!$dashData) {
-            $this->logger->error("Не удалось получить JSON дашборда {$info['dashboard_uid']}");
-            return false;
-        }
-        $panels = $dashData['dashboard']['panels'] ?? [];
-        $targetPanel = null;
-        foreach ($panels as $p) {
-            if ((string)$p['id'] === $info['panel_id']) {
-                $targetPanel = $p;
-                break;
-            }
-        }
-
-        if (!$targetPanel || empty($targetPanel['targets'])) {
-            $this->logger->warning("Панель {$info['panel_id']} не найдена или без targets");
-            return false;
-        }
-
-        // Ищем первый non-empty expr в targets
-        $expr = '';
-        foreach ($targetPanel['targets'] as $t) {
-            if (!empty($t['expr'] ?? '')) {
-                $expr = $t['expr'];
-                break;
-            }
-        }
-        if (empty($expr)) {
-            $this->logger->error("Expr не найден в панели {$info['panel_id']}");
-            return false;
-        }
-
+        $expr = $info['substituted_query'];
         $this->logger->info("Получен expr для $metricName: $expr");
         return $expr;
     }
