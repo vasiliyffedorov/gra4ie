@@ -5,6 +5,7 @@ namespace App\Processors;
 
 use App\Interfaces\GrafanaVariableProcessorInterface;
 use App\Interfaces\LoggerInterface;
+use App\Utilities\HttpClient;
 
 // Пользовательские исключения
 class GrafanaAPIException extends \Exception {}
@@ -29,56 +30,20 @@ class Config {
 class GrafanaAPI {
     private $config;
     private $dashboardCache = [];
+    private HttpClient $httpClient;
 
     public function __construct(Config $config) {
         $this->config = $config;
+        $this->httpClient = new HttpClient([
+            'Authorization: Bearer ' . $this->config->token,
+            'Content-Type: application/json'
+        ], null);
     }
 
-    private function httpRequest(string $method, string $url, ?string $body = null): ?string {
-        $maxRetries = 2;
-        $retryCount = 0;
-
-        while ($retryCount <= $maxRetries) {
-            $ch = curl_init($url);
-            curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_HTTPHEADER, [
-                'Authorization: Bearer ' . $this->config->token,
-                'Content-Type: application/json'
-            ]);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
-            if ($body !== null) {
-                curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
-            }
-            $resp = curl_exec($ch);
-            $err = curl_error($ch);
-            $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
-
-            if (!$err && $code < 400) {
-                return $resp;
-            }
-
-            $errorDetails = $err ?: "HTTP status $code";
-            if ($code >= 400 && $resp) {
-                $errorDetails .= ", Body: " . substr($resp, 0, 500);
-            }
-
-            $retryCount++;
-            if ($retryCount <= $maxRetries && ($err || in_array($code, [500, 502, 503, 504]))) {
-                sleep(1 * $retryCount);
-            } else {
-                return null;
-            }
-        }
-
-        return null;
-    }
 
     public function searchDashboards($query, $type) {
         $url = $this->config->url . '/api/search?query=' . urlencode($query) . '&type=' . urlencode($type);
-        $response = $this->httpRequest('GET', $url);
+        $response = $this->httpClient->request('GET', $url);
         if (!$response) {
             throw new GrafanaAPIException('Failed to search dashboards');
         }
@@ -94,7 +59,7 @@ class GrafanaAPI {
             return $this->dashboardCache[$uid];
         }
         $url = $this->config->url . '/api/dashboards/uid/' . $uid;
-        $response = $this->httpRequest('GET', $url);
+        $response = $this->httpClient->request('GET', $url);
         if (!$response) {
             throw new GrafanaAPIException('Failed to get dashboard');
         }
@@ -108,7 +73,7 @@ class GrafanaAPI {
 
     public function getDatasources() {
         $url = $this->config->url . '/api/datasources';
-        $response = $this->httpRequest('GET', $url);
+        $response = $this->httpClient->request('GET', $url);
         if (!$response) {
             throw new GrafanaAPIException('Failed to get datasources');
         }
@@ -174,11 +139,16 @@ class DataFetcher {
     private $api;
     private $config;
     private $dsMap;
+    private HttpClient $httpClient;
 
     public function __construct(GrafanaAPI $api, Config $config, $dsMap) {
         $this->api = $api;
         $this->config = $config;
         $this->dsMap = $dsMap;
+        $this->httpClient = new HttpClient([
+            'Authorization: Bearer ' . $this->config->token,
+            'Content-Type: application/json'
+        ], null);
     }
 
     public function getDefaultDatasourceUid() {
@@ -224,7 +194,7 @@ class DataFetcher {
                 $metric = trim($metric);
                 $label = trim($label);
                 $url = $this->config->url . '/api/datasources/proxy/' . $datasourceId . '/api/v1/series?match[]=' . urlencode($metric);
-                $response = $this->httpRequest('GET', $url);
+                $response = $this->httpClient->request('GET', $url);
                 if (!$response) {
                     throw new DataFetchException('Failed to fetch options for variable ' . $variable['name']);
                 }
@@ -249,7 +219,7 @@ class DataFetcher {
                 // label only
                 $label = trim($processed);
                 $url = $this->config->url . '/api/datasources/proxy/' . $datasourceId . '/api/v1/label/' . urlencode($label) . '/values';
-                $response = $this->httpRequest('GET', $url);
+                $response = $this->httpClient->request('GET', $url);
                 if (!$response) {
                     throw new DataFetchException('Failed to fetch options for variable ' . $variable['name']);
                 }
@@ -294,7 +264,7 @@ class DataFetcher {
             ];
         }
         $body = json_encode($payload);
-        $response = $this->httpRequest('POST', $url, $body);
+        $response = $this->httpClient->request('POST', $url, $body);
         if (!$response) {
             throw new DataFetchException('Failed to fetch options for variable ' . $variable['name']);
         }
@@ -320,47 +290,6 @@ class DataFetcher {
         return $values;
     }
 
-    private function httpRequest(string $method, string $url, ?string $body = null): ?string {
-        $maxRetries = 2;
-        $retryCount = 0;
-
-        while ($retryCount <= $maxRetries) {
-            $ch = curl_init($url);
-            curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_HTTPHEADER, [
-                'Authorization: Bearer ' . $this->config->token,
-                'Content-Type: application/json'
-            ]);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
-            if ($body !== null) {
-                curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
-            }
-            $resp = curl_exec($ch);
-            $err = curl_error($ch);
-            $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
-
-            if (!$err && $code < 400) {
-                return $resp;
-            }
-
-            $errorDetails = $err ?: "HTTP status $code";
-            if ($code >= 400 && $resp) {
-                $errorDetails .= ", Body: " . substr($resp, 0, 500);
-            }
-
-            $retryCount++;
-            if ($retryCount <= $maxRetries && ($err || in_array($code, [500, 502, 503, 504]))) {
-                sleep(1 * $retryCount);
-            } else {
-                return null;
-            }
-        }
-
-        return null;
-    }
 }
 
 // Класс QueryExtractor для извлечения запросов из панелей дашборда

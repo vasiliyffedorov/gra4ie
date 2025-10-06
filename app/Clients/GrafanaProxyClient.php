@@ -8,6 +8,7 @@ use App\Interfaces\GrafanaClientInterface;
 use App\Interfaces\CacheManagerInterface;
 use App\Interfaces\GrafanaVariableProcessorInterface;
 use App\Cache\CacheManagerInterface as CacheManager; // Wait, no, it's App\Interfaces\CacheManagerInterface
+use App\Utilities\HttpClient;
 
 class GrafanaProxyClient implements GrafanaClientInterface
 {
@@ -21,6 +22,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
     private GrafanaVariableProcessorInterface $variableProcessor;
     private array $dashCache = [];
     private int $instanceId;
+    private HttpClient $httpClient;
 
     /** тип последнего datasource, на который сделали queryRange */
     private string $lastDataSourceType = 'unknown';
@@ -42,6 +44,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
             'Content-Type: application/json',
             'Accept: application/json',
         ];
+        $this->httpClient = new HttpClient($this->headers, $this->logger);
 
         $this->loadMetricsCache();
     }
@@ -117,7 +120,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
         ]);
         $this->logger->info("DS query body for $metricName (type: {$this->lastDataSourceType}): " . substr($body, 0, 500));
 
-        $resp = $this->httpRequest('POST', "{$this->grafanaUrl}/api/ds/query", $body);
+        $resp = $this->httpClient->request('POST', "{$this->grafanaUrl}/api/ds/query", $body);
         if (!$resp) {
             $this->logger->error("DS query для $metricName завершился ошибкой");
             return [];
@@ -178,7 +181,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
      */
     private function initMetricsCache(): void
     {
-        $resp = $this->httpRequest('GET', "{$this->grafanaUrl}/api/search?type=dash-db");
+        $resp = $this->httpClient->request('GET', "{$this->grafanaUrl}/api/search?type=dash-db");
         if (!$resp) {
             $this->logger->error("Не удалось получить список дашбордов");
             return;
@@ -233,52 +236,6 @@ class GrafanaProxyClient implements GrafanaClientInterface
         $this->logger->info("Кэш метрик Grafana инициализирован (временный): " . implode(', ', array_keys($this->metricsCache)));
     }
 
-    /**
-     * Выполняет HTTP-запрос к Grafana и возвращает тело или null.
-     */
-    private function httpRequest(string $method, string $url, ?string $body = null): ?string
-    {
-        $maxRetries = 2; // Retry up to 2 times for transient errors
-        $retryCount = 0;
-
-        while ($retryCount <= $maxRetries) {
-            $this->logger->info("Grafana HTTP Request → $method $url (attempt " . ($retryCount + 1) . ")\nBody: " . ($body ?? 'none'));
-            $ch = curl_init($url);
-            curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_HTTPHEADER, $this->headers);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 10); // Add 10s timeout
-            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5); // Add connect timeout
-            if ($body !== null) {
-                curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
-            }
-            $resp = curl_exec($ch);
-            $err  = curl_error($ch);
-            $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
-
-            if (!$err && $code < 400) {
-                $this->logger->info("Grafana HTTP Response ← Code: $code\nBody (truncated): " . substr($resp ?? '', 0, 1000));
-                return $resp;
-            }
-
-            $errorDetails = $err ?: "HTTP status $code";
-            if ($code >= 400 && $resp) {
-                $errorDetails .= ", Body: " . substr($resp, 0, 500);
-            }
-            $this->logger->error("Grafana HTTP Error → $method $url (attempt " . ($retryCount + 1) . ")\nCode: $code, Error: $errorDetails");
-
-            $retryCount++;
-            if ($retryCount <= $maxRetries && ($err || in_array($code, [500, 502, 503, 504]))) { // Retry on curl err or 5xx
-                $this->logger->info("Retrying request after " . ($retryCount - 1) . " failure(s)...");
-                sleep(1 * $retryCount); // Exponential backoff: 1s, 2s
-            } else {
-                return null;
-            }
-        }
-
-        return null;
-    }
 
     /**
      * In-request cache для JSON дашборда.
@@ -288,7 +245,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
         if (isset($this->dashCache[$uid])) {
             return $this->dashCache[$uid];
         }
-        $dashJson = $this->httpRequest('GET', "{$this->grafanaUrl}/api/dashboards/uid/{$uid}");
+        $dashJson = $this->httpClient->request('GET', "{$this->grafanaUrl}/api/dashboards/uid/{$uid}");
         if (!$dashJson) {
             return null;
         }
@@ -636,7 +593,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
 
         $body = json_encode($newDashboard);
         $this->logger->info("Создание danger dashboard для $metricName, body length: " . strlen($body));
-        $resp = $this->httpRequest('POST', "{$this->grafanaUrl}/api/dashboards/db", $body);
+        $resp = $this->httpClient->request('POST', "{$this->grafanaUrl}/api/dashboards/db", $body);
         if (!$resp) {
             $this->logger->error("Ошибка создания дашборда для $metricName");
             return false;
