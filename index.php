@@ -134,6 +134,7 @@ foreach ($requiredKeys as $key) {
 }
 
 $cacheManager = $container->get(\App\Interfaces\CacheManagerInterface::class);
+$variableProcessor = $container->get(\App\Interfaces\GrafanaVariableProcessorInterface::class);
 
 function extractGrafanaInstanceData(\App\Interfaces\CacheManagerInterface $cacheManager, \App\Interfaces\LoggerInterface $logger): ?array {
     $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
@@ -227,7 +228,7 @@ if ($currentInstance === null) {
 }
 
 // Создание GrafanaProxyClient с instance
-$proxy = new \App\Clients\GrafanaProxyClient($currentInstance, $logger, $cacheManager);
+$proxy = new \App\Clients\GrafanaProxyClient($currentInstance, $logger, $cacheManager, $variableProcessor);
 
 // Регистрация proxy в container для CorridorBuilder
 $container->set(\App\Interfaces\GrafanaClientInterface::class, $proxy);

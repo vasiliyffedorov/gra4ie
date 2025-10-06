@@ -5,7 +5,7 @@ namespace App\Interfaces;
 
 interface GrafanaClientInterface
 {
-    public function __construct(array $instance, LoggerInterface $logger, ?CacheManagerInterface $cacheManager = null);
+    public function __construct(array $instance, LoggerInterface $logger, ?CacheManagerInterface $cacheManager = null, ?GrafanaVariableProcessorInterface $variableProcessor = null);
 
     public function getMetricNames(): array;
 

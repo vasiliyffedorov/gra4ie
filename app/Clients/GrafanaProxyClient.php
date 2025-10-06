@@ -6,6 +6,7 @@ namespace App\Clients;
 use App\Interfaces\LoggerInterface;
 use App\Interfaces\GrafanaClientInterface;
 use App\Interfaces\CacheManagerInterface;
+use App\Interfaces\GrafanaVariableProcessorInterface;
 use App\Cache\CacheManagerInterface as CacheManager; // Wait, no, it's App\Interfaces\CacheManagerInterface
 
 class GrafanaProxyClient implements GrafanaClientInterface
@@ -17,6 +18,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
     private array $headers;
     private array $blacklistDatasourceIds; // New property for blacklisted datasource IDs
     private CacheManagerInterface $cacheManager;
+    private GrafanaVariableProcessorInterface $variableProcessor;
     private array $dashCache = [];
     private int $instanceId;
 
@@ -26,11 +28,13 @@ class GrafanaProxyClient implements GrafanaClientInterface
     public function __construct(
         array $instance,
         LoggerInterface $logger,
-        ?CacheManagerInterface $cacheManager = null
+        ?CacheManagerInterface $cacheManager = null,
+        ?GrafanaVariableProcessorInterface $variableProcessor = null
     ) {
         $this->instanceId = $instance['id'];
         $this->logger     = $logger;
         $this->cacheManager = $cacheManager;
+        $this->variableProcessor = $variableProcessor;
 
         $this->loadInstanceData();
         $this->headers    = [
@@ -186,16 +190,14 @@ class GrafanaProxyClient implements GrafanaClientInterface
             $uid   = $dash['uid'];
             $title = $dash['title'] ?: $uid;
 
-            // Запуск скрипта grafana_variables.php для получения комбинаций
-            $command = "php grafana_variables.php --url='{$this->grafanaUrl}' --token='{$this->apiToken}' --dashboard=$uid";
-            $scriptOutput = shell_exec($command);
-            if ($scriptOutput === null) {
-                $this->logger->warning("Не удалось выполнить скрипт для дашборда $uid");
+            // Использование GrafanaVariableProcessor для получения комбинаций
+            if (!$this->variableProcessor) {
+                $this->logger->error("GrafanaVariableProcessor не установлен для instance {$this->instanceId}");
                 continue;
             }
-            $output = json_decode($scriptOutput, true);
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                $this->logger->warning("Ошибка парсинга JSON для дашборда $uid: " . json_last_error_msg());
+            $output = $this->variableProcessor->processVariables($this->grafanaUrl, $this->apiToken, $uid);
+            if (empty($output)) {
+                $this->logger->warning("Не удалось обработать переменные для дашборда $uid");
                 continue;
             }
 

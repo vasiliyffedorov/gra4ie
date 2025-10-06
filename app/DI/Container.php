@@ -6,6 +6,7 @@ namespace App\DI;
 use App\Interfaces\LoggerInterface;
 use App\Interfaces\CacheManagerInterface;
 use App\Interfaces\GrafanaClientInterface;
+use App\Interfaces\GrafanaVariableProcessorInterface;
 use App\Interfaces\DFTProcessorInterface;
 use App\Interfaces\DataProcessorInterface;
 use App\Interfaces\AnomalyDetectorInterface;
@@ -135,6 +136,12 @@ class Container
             $optimizer = $this->get(\App\Processors\HistoricalPeriodOptimizer::class);
             return new \App\Processors\StatsCacheManager($config, $logger, $cacheManager, $responseFormatter, $dataProcessor, $dftProcessor, $anomalyDetector, $client, $optimizer);
         };
+        // GrafanaVariableProcessor
+        $this->services[GrafanaVariableProcessorInterface::class] = function () {
+            $logger = $this->get(LoggerInterface::class);
+            return new \App\Processors\GrafanaVariableProcessor($logger);
+        };
+
         // PSR-16 Cache Adapter
         $this->services[SimpleCacheInterface::class] = function () {
             $logger = $this->get(LoggerInterface::class);

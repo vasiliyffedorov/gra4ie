@@ -20,6 +20,7 @@ require './vendor/autoload.php';
 
 use App\DI\Container;
 use App\Interfaces\GrafanaClientInterface;
+use App\Interfaces\GrafanaVariableProcessorInterface;
 
 // Читаем конфиг аналогично index.php
 $flatIni = parse_ini_file('./config/config.cfg', true, INI_SCANNER_RAW);
@@ -69,6 +70,7 @@ foreach ($requiredKeys as $key) {
 $container = new Container($config);
 $cacheManager = $container->get(\App\Interfaces\CacheManagerInterface::class);
 $logger = $container->get(\App\Interfaces\LoggerInterface::class);
+$variableProcessor = $container->get(GrafanaVariableProcessorInterface::class);
 
 // Получить instance_id из аргументов командной строки
 $instanceId = $argv[1] ?? null;
@@ -93,7 +95,7 @@ if (!$instance) {
 }
 
 // Создать proxy с instance
-$proxy = new \App\Clients\GrafanaProxyClient($instance, $logger, $cacheManager);
+$proxy = new \App\Clients\GrafanaProxyClient($instance, $logger, $cacheManager, $variableProcessor);
 
 $logger->info("Обновление кэша метрик Grafana для instance $instanceId");
 $proxy->updateMetricsCache();
