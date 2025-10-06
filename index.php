@@ -148,9 +148,14 @@ function extractGrafanaInstanceData(\App\Interfaces\CacheManagerInterface $cache
         return null;
     }
 
-    list($login, $token) = explode(':', $credentials, 2);
-    $remoteAddr = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
-    $url = "http://{$remoteAddr}:{$login}";
+    $lastColonPos = strrpos($credentials, ':');
+    if ($lastColonPos === false) {
+        $logger->error('Invalid credentials format');
+        return null;
+    }
+    $login = substr($credentials, 0, $lastColonPos);
+    $token = substr($credentials, $lastColonPos + 1);
+    $url = $login;
 
     $datasourceUid = $_SERVER['HTTP_X_DATASOURCE_UID'] ?? '';
 
