@@ -129,6 +129,18 @@ class SQLiteCacheDatabase
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ");
+        $this->db->exec("
+            CREATE TABLE IF NOT EXISTS grafana_dashboards_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                instance_id INTEGER NOT NULL,
+                dashboards_json TEXT NOT NULL,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (instance_id) REFERENCES grafana_instances(id),
+                UNIQUE(instance_id)
+            )
+        ");
+        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_grafana_dashboards_cache_instance_id ON grafana_dashboards_cache(instance_id)");
+        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_grafana_dashboards_cache_last_updated ON grafana_dashboards_cache(last_updated)");
 
         $this->db->exec("CREATE INDEX IF NOT EXISTS idx_queries_query ON queries(query)");
         $this->db->exec("CREATE INDEX IF NOT EXISTS idx_dft_cache_query_id ON dft_cache(query_id)");
@@ -299,6 +311,29 @@ class SQLiteCacheDatabase
             }
         } catch (\PDOException $e) {
             $this->logger->error("Ошибка при создании/миграции таблицы grafana_instances: " . $e->getMessage());
+        }
+
+        // ensure grafana_dashboards_cache
+        try {
+            $gdcExists = $this->db->query(\sprintf("SELECT name FROM sqlite_master WHERE type='table' AND name='grafana_dashboards_cache'"))->fetchColumn();
+            if (!$gdcExists) {
+                $this->logger->warning("Создание таблицы grafana_dashboards_cache.");
+                $this->db->exec("
+                    CREATE TABLE IF NOT EXISTS grafana_dashboards_cache (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        instance_id INTEGER NOT NULL,
+                        dashboards_json TEXT NOT NULL,
+                        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (instance_id) REFERENCES grafana_instances(id),
+                        UNIQUE(instance_id)
+                    )
+                ");
+                $this->db->exec("CREATE INDEX IF NOT EXISTS idx_grafana_dashboards_cache_instance_id ON grafana_dashboards_cache(instance_id)");
+                $this->db->exec("CREATE INDEX IF NOT EXISTS idx_grafana_dashboards_cache_last_updated ON grafana_dashboards_cache(last_updated)");
+                $this->logger->info("Таблица grafana_dashboards_cache создана.");
+            }
+        } catch (\PDOException $e) {
+            $this->logger->error("Ошибка при создании таблицы grafana_dashboards_cache: " . $e->getMessage());
         }
     }
 }

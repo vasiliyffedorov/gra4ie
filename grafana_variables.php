@@ -1,17 +1,18 @@
 <?php
-declare(strict_types=1);
-
-namespace App\Processors;
-
-use App\Interfaces\GrafanaVariableProcessorInterface;
-use App\Interfaces\LoggerInterface;
-use App\Utilities\HttpClient;
+// Парсинг аргументов командной строки
+$options = getopt('', ['url:', 'token:', 'dashboard:']);
+if (!isset($options['url']) || !isset($options['token']) || !isset($options['dashboard'])) {
+    die("Usage: php grafana_variables.php --url=<url> --token=<token> --dashboard=<dashboard_uid>\n");
+}
+$url = $options['url'];
+$token = $options['token'];
+$dashboard_uid = $options['dashboard'];
 
 // Пользовательские исключения
-class GrafanaAPIException extends \Exception {}
-class VariableParseException extends \Exception {}
-class DataFetchException extends \Exception {}
-class CombinationException extends \Exception {}
+class GrafanaAPIException extends Exception {}
+class VariableParseException extends Exception {}
+class DataFetchException extends Exception {}
+class CombinationException extends Exception {}
 
 // Класс Config для хранения конфигурации
 class Config {
@@ -30,20 +31,58 @@ class Config {
 class GrafanaAPI {
     private $config;
     private $dashboardCache = [];
-    private HttpClient $httpClient;
 
     public function __construct(Config $config) {
         $this->config = $config;
-        $this->httpClient = new HttpClient([
-            'Authorization: Bearer ' . $this->config->token,
-            'Content-Type: application/json'
-        ], null);
     }
 
+    private function httpRequest(string $method, string $url, ?string $body = null): ?string {
+        $maxRetries = 2;
+        $retryCount = 0;
+
+        while ($retryCount <= $maxRetries) {
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'Authorization: Bearer ' . $this->config->token,
+                'Content-Type: application/json'
+            ]);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+            if ($body !== null) {
+                curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+            }
+            $resp = curl_exec($ch);
+            $err = curl_error($ch);
+            $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if (!$err && $code < 400) {
+                return $resp;
+            }
+
+            $errorDetails = $err ?: "HTTP status $code";
+            if ($code >= 400 && $resp) {
+                $errorDetails .= ", Body: " . substr($resp, 0, 500);
+            }
+
+            $retryCount++;
+            if ($retryCount <= $maxRetries && ($err || in_array($code, [500, 502, 503, 504]))) {
+                sleep(1 * $retryCount);
+            } else {
+                return null;
+            }
+        }
+
+        return null;
+    }
 
     public function searchDashboards($query, $type) {
         $url = $this->config->url . '/api/search?query=' . urlencode($query) . '&type=' . urlencode($type);
-        $response = $this->httpClient->request('GET', $url);
+        $response = $this->httpRequest('GET', $url);
         if (!$response) {
             throw new GrafanaAPIException('Failed to search dashboards');
         }
@@ -59,7 +98,7 @@ class GrafanaAPI {
             return $this->dashboardCache[$uid];
         }
         $url = $this->config->url . '/api/dashboards/uid/' . $uid;
-        $response = $this->httpClient->request('GET', $url);
+        $response = $this->httpRequest('GET', $url);
         if (!$response) {
             throw new GrafanaAPIException('Failed to get dashboard');
         }
@@ -73,7 +112,7 @@ class GrafanaAPI {
 
     public function getDatasources() {
         $url = $this->config->url . '/api/datasources';
-        $response = $this->httpClient->request('GET', $url);
+        $response = $this->httpRequest('GET', $url);
         if (!$response) {
             throw new GrafanaAPIException('Failed to get datasources');
         }
@@ -141,7 +180,6 @@ class DataFetcher {
     private $dsMap;
     private $dsNameMap;
     private $defaultDsUid;
-    private HttpClient $httpClient;
 
     public function __construct(GrafanaAPI $api, Config $config, $dsMap, $datasources, $defaultDsUid = null) {
         $this->api = $api;
@@ -152,10 +190,6 @@ class DataFetcher {
             $this->dsNameMap[$ds['name']] = $ds['uid'];
         }
         $this->defaultDsUid = $defaultDsUid;
-        $this->httpClient = new HttpClient([
-            'Authorization: Bearer ' . $this->config->token,
-            'Content-Type: application/json'
-        ], null);
     }
 
     public function fetchOptions($variable, $datasource_type = null, $interpolatedQuery = null) {
@@ -204,7 +238,7 @@ class DataFetcher {
                 $metric = trim($metric);
                 $label = trim($label);
                 $url = $this->config->url . '/api/datasources/proxy/' . $datasourceId . '/api/v1/series?match[]=' . urlencode($metric);
-                $response = $this->httpClient->request('GET', $url);
+                $response = $this->httpRequest('GET', $url);
                 if (!$response) {
                     throw new DataFetchException('Failed to fetch options for variable ' . $variable['name']);
                 }
@@ -229,7 +263,7 @@ class DataFetcher {
                 // label only
                 $label = trim($processed);
                 $url = $this->config->url . '/api/datasources/proxy/' . $datasourceId . '/api/v1/label/' . urlencode($label) . '/values';
-                $response = $this->httpClient->request('GET', $url);
+                $response = $this->httpRequest('GET', $url);
                 if (!$response) {
                     throw new DataFetchException('Failed to fetch options for variable ' . $variable['name']);
                 }
@@ -274,7 +308,7 @@ class DataFetcher {
             ];
         }
         $body = json_encode($payload);
-        $response = $this->httpClient->request('POST', $url, $body);
+        $response = $this->httpRequest('POST', $url, $body);
         if (!$response) {
             throw new DataFetchException('Failed to fetch options for variable ' . $variable['name']);
         }
@@ -300,6 +334,47 @@ class DataFetcher {
         return $values;
     }
 
+    private function httpRequest(string $method, string $url, ?string $body = null): ?string {
+        $maxRetries = 2;
+        $retryCount = 0;
+
+        while ($retryCount <= $maxRetries) {
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'Authorization: Bearer ' . $this->config->token,
+                'Content-Type: application/json'
+            ]);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+            if ($body !== null) {
+                curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+            }
+            $resp = curl_exec($ch);
+            $err = curl_error($ch);
+            $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if (!$err && $code < 400) {
+                return $resp;
+            }
+
+            $errorDetails = $err ?: "HTTP status $code";
+            if ($code >= 400 && $resp) {
+                $errorDetails .= ", Body: " . substr($resp, 0, 500);
+            }
+
+            $retryCount++;
+            if ($retryCount <= $maxRetries && ($err || in_array($code, [500, 502, 503, 504]))) {
+                sleep(1 * $retryCount);
+            } else {
+                return null;
+            }
+        }
+
+        return null;
+    }
 }
 
 // Класс QueryExtractor для извлечения запросов из панелей дашборда
@@ -351,104 +426,152 @@ class QueryExtractor {
     }
 }
 
-class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
-{
-    private LoggerInterface $logger;
-
-    public function __construct(LoggerInterface $logger)
-    {
-        $this->logger = $logger;
-    }
-
-    // Функция для определения зависимостей переменных
-    private function getDependencies($variables) {
-        $deps = [];
-        foreach ($variables as $var) {
-            $deps[$var['name']] = [];
-            if ($var['type'] === 'query') {
-                $query = $var['query']['query'] ?? $var['query'];
-                if (is_string($query) && preg_match_all('/\$(\w+)/', $query, $matches)) {
-                    $deps[$var['name']] = $matches[1];
-                }
+// Функция для определения зависимостей переменных
+function getDependencies($variables) {
+    $deps = [];
+    foreach ($variables as $var) {
+        $deps[$var['name']] = [];
+        if ($var['type'] === 'query') {
+            $query = $var['query']['query'] ?? $var['query'];
+            if (preg_match_all('/\$(\w+)/', $query, $matches)) {
+                $deps[$var['name']] = $matches[1];
             }
         }
-        // Инициализировать пустые массивы для всех зависимостей
-        $allDeps = $deps;
-        foreach ($deps as $name => $depList) {
-            foreach ($depList as $dep) {
-                if (!isset($allDeps[$dep])) {
-                    $allDeps[$dep] = [];
-                }
-            }
-        }
-        return $allDeps;
     }
+    return $deps;
+}
 
-    // Функция для топологической сортировки переменных
-    private function topologicalSort($variables, $deps) {
-        $sorted = [];
-        $visited = [];
-        $visiting = [];
+// Функция для топологической сортировки переменных
+function topologicalSort($variables, $deps) {
+    $sorted = [];
+    $visited = [];
+    $visiting = [];
 
-        $visit = function($name, &$sorted, &$visited, &$visiting, $deps) use (&$visit) {
-            if (isset($visited[$name])) return;
-            if (isset($visiting[$name])) throw new \Exception("Circular dependency detected for $name");
-            $visiting[$name] = true;
-            foreach ($deps[$name] as $dep) {
-                $visit($dep, $sorted, $visited, $visiting, $deps);
-            }
-            $visiting[$name] = false;
-            $visited[$name] = true;
-            $sorted[] = $name;
-        };
-
-        foreach (array_keys($deps) as $name) {
-            $visit($name, $sorted, $visited, $visiting, $deps);
+    $visit = function($name, &$sorted, &$visited, &$visiting, $deps) use (&$visit) {
+        if (isset($visited[$name])) return;
+        if (isset($visiting[$name])) throw new Exception("Circular dependency detected for $name");
+        $visiting[$name] = true;
+        foreach ($deps[$name] as $dep) {
+            $visit($dep, $sorted, $visited, $visiting, $deps);
         }
-        return $sorted;
-    }
+        $visiting[$name] = false;
+        $visited[$name] = true;
+        $sorted[] = $name;
+    };
 
-    // Функция для генерации всех комбинаций переменных из дерева
-    private function generateCombinations($tree, $varName) {
-        $combinations = [];
-        foreach ($tree as $value => $subtree) {
-            if ($subtree === null) {
-                $combinations[] = [$varName => $value];
-            } elseif (is_array($subtree)) {
-                $subCombs = [[]];
-                foreach ($subtree as $depVar => $depTree) {
-                    $depCombs = $this->generateCombinations($depTree, $depVar);
-                    $newSubCombs = [];
-                    foreach ($subCombs as $subComb) {
-                        foreach ($depCombs as $depComb) {
-                            $newSubCombs[] = array_merge($subComb, $depComb);
-                        }
-                    }
-                    $subCombs = $newSubCombs;
-                }
+    foreach (array_keys($deps) as $name) {
+        $visit($name, $sorted, $visited, $visiting, $deps);
+    }
+    return $sorted;
+}
+
+// Функция для генерации всех комбинаций переменных из дерева
+function generateCombinations($tree, $varName) {
+    $combinations = [];
+    foreach ($tree as $value => $subtree) {
+        if ($subtree === null) {
+            $combinations[] = [$varName => $value];
+        } elseif (is_array($subtree)) {
+            $subCombs = [[]];
+            foreach ($subtree as $depVar => $depTree) {
+                $depCombs = generateCombinations($depTree, $depVar);
+                $newSubCombs = [];
                 foreach ($subCombs as $subComb) {
-                    $combinations[] = array_merge([$varName => $value], $subComb);
+                    foreach ($depCombs as $depComb) {
+                        $newSubCombs[] = array_merge($subComb, $depComb);
+                    }
                 }
+                $subCombs = $newSubCombs;
+            }
+            foreach ($subCombs as $subComb) {
+                $combinations[] = array_merge([$varName => $value], $subComb);
+            }
+        } else {
+            $combinations[] = [$varName => $value];
+        }
+    }
+    return $combinations;
+}
+
+// Основной поток выполнения
+$config = new Config($url, $token, $dashboard_uid);
+$api = new GrafanaAPI($config);
+$parser = new VariableParser();
+
+try {
+    $fullDashboard = $api->getDashboard($dashboard_uid);
+    $defaultDs = null;
+    if (isset($fullDashboard['dashboard']['panels']) && count($fullDashboard['dashboard']['panels']) > 0) {
+        $panelDs = $fullDashboard['dashboard']['panels'][0]['datasource'];
+        $defaultDs = is_array($panelDs) ? ($panelDs['uid'] ?? null) : $panelDs;
+    }
+    $datasources = $api->getDatasources();
+    $dsMap = [];
+    foreach ($datasources as $ds) {
+        $dsMap[$ds['uid']] = $ds['id'];
+    }
+    $defaultDsUid = null;
+    foreach ($datasources as $ds) {
+        if (isset($ds['isDefault']) && $ds['isDefault']) {
+            $defaultDsUid = $ds['uid'];
+            break;
+        }
+    }
+    $fetcher = new DataFetcher($api, $config, $dsMap, $datasources, $defaultDsUid);
+    $variables = $parser->parseVariables($fullDashboard['dashboard']);
+    $varMap = [];
+    foreach ($variables as $var) {
+        $varMap[$var['name']] = $var;
+    }
+    foreach ($variables as &$variable) {
+        if ($variable['type'] === 'query' && !isset($variable['datasource_type'])) {
+            $refId = $variable['query']['refId'] ?? '';
+            if (stripos($refId, 'Prometheus') !== false) {
+                $variable['datasource_type'] = 'prometheus';
+            } elseif (stripos($refId, 'Influx') !== false) {
+                $variable['datasource_type'] = 'influxdb';
+            } elseif (stripos($refId, 'ClickHouse') !== false) {
+                $variable['datasource_type'] = 'grafana-clickhouse-datasource';
             } else {
-                $combinations[] = [$varName => $value];
+                $variable['datasource_type'] = 'prometheus'; // default
             }
         }
-        return $combinations;
+        $varMap[$variable['name']] = $variable;
     }
+
+$deps = getDependencies($variables);
+$sortedNames = topologicalSort($variables, $deps);
+$dependents = [];
+foreach ($deps as $var => $depList) {
+    foreach ($depList as $dep) {
+        if (!isset($dependents[$dep])) $dependents[$dep] = [];
+        $dependents[$dep][] = $var;
+    }
+}
 
     // Функция для построения дерева
-    private function buildTree($varName, $varMap, $dependents, $deps, $fetcher, $parentValue = null, $parentVar = null) {
+    function buildTree($varName, $varMap, $dependents, $deps, $fetcher, $parentValue = null, $parentVar = null) {
         $variable = $varMap[$varName];
         $interpolatedQuery = null;
         if ($parentValue !== null && $parentVar !== null && $variable['type'] !== 'custom') {
             $query = $variable['query']['query'] ?? $variable['query'];
-            $interpolatedQuery = str_replace('$' . $parentVar, (string)$parentValue, $query);
+            $interpolatedQuery = str_replace('$' . $parentVar, $parentValue, $query);
         }
         try {
             $options = $fetcher->fetchOptions($variable, $variable['datasource_type'] ?? null, $interpolatedQuery);
-        } catch (\Exception $e) {
-            error_log("Error fetching options for $varName: " . $e->getMessage());
+        } catch (Exception $e) {
+            echo "Error fetching options for $varName: " . $e->getMessage() . "\n";
             $options = [];
+        }
+        if (empty($options)) {
+            $options = [['value' => 'default', 'text' => 'Default']];
+        }
+        if ($variable['type'] === 'custom' && empty($options)) {
+            $options = [['value' => 'default', 'text' => 'Default']];
+        }
+        if (($variable['type'] === 'constant' || $variable['type'] === 'textbox') && empty($options) && isset($variable['query'])) {
+            $values_parsed = array_map('trim', explode(',', $variable['query']));
+            $options = array_map(function($v) { return ['value' => $v, 'text' => $v]; }, $values_parsed);
         }
         $values = array_map(function($opt) { return $opt['value']; }, $options);
         if ($variable['type'] === 'custom') {
@@ -461,7 +584,7 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
                 foreach ($values as $value) {
                     $subtree = [];
                     foreach ($dependents[$varName] as $depVar) {
-                        $subtree[$depVar] = $this->buildTree($depVar, $varMap, $dependents, $deps, $fetcher, $value, $varName);
+                        $subtree[$depVar] = buildTree($depVar, $varMap, $dependents, $deps, $fetcher, $value, $varName);
                     }
                     $result[$value] = $subtree;
                 }
@@ -476,7 +599,7 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
                 foreach ($values as $value) {
                     $subtree = [];
                     foreach ($dependents[$varName] as $depVar) {
-                        $subtree[$depVar] = $this->buildTree($depVar, $varMap, $dependents, $deps, $fetcher, $value, $varName);
+                        $subtree[$depVar] = buildTree($depVar, $varMap, $dependents, $deps, $fetcher, $value, $varName);
                     }
                     $result[$value] = $subtree;
                 }
@@ -491,7 +614,7 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
                 foreach ($values as $value) {
                     $subtree = [];
                     foreach ($dependents[$varName] as $depVar) {
-                        $subtree[$depVar] = $this->buildTree($depVar, $varMap, $dependents, $deps, $fetcher, $value, $varName);
+                        $subtree[$depVar] = buildTree($depVar, $varMap, $dependents, $deps, $fetcher, $value, $varName);
                     }
                     $result[$value] = $subtree;
                 }
@@ -500,177 +623,101 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
         }
     }
 
-    public function processVariables(string $url, string $token, string $dashboardUid): array
-    {
-        $config = new Config($url, $token, $dashboardUid);
-        $api = new GrafanaAPI($config);
-        $parser = new VariableParser();
-        $datasources = $api->getDatasources();
-        $dsMap = [];
-        $dsNameMap = [];
-        $defaultDs = null;
-        foreach ($datasources as $ds) {
-            $dsMap[$ds['uid']] = $ds['id'];
-            $dsNameMap[$ds['name']] = $ds['uid'];
-            if ($ds['isDefault']) {
-                $defaultDs = $ds['uid'];
-            }
-        }
-        if (!$defaultDs) {
-            // Fallback to first prometheus datasource
-            foreach ($datasources as $ds) {
-                if ($ds['type'] === 'prometheus') {
-                    $defaultDs = $ds['uid'];
-                    break;
-                }
-            }
-        }
-        $fetcher = new DataFetcher($api, $config, $dsMap, $datasources, $defaultDs);
+    // Построить дерево для custom, constant, textbox переменных и независимых query переменных
+    $result = [];
+    $roots = array_filter($variables, function($variable) use ($deps) {
+        return ($variable['type'] === 'query' || $variable['type'] === 'custom' || $variable['type'] === 'constant' || $variable['type'] === 'textbox') && empty($deps[$variable['name']]);
+    });
+    foreach ($roots as $root) {
+        $result[$root['name']] = buildTree($root['name'], $varMap, $dependents, $deps, $fetcher);
+    }
 
-        try {
-            $fullDashboard = $api->getDashboard($dashboardUid);
-            $panelDs = null;
-            if (isset($fullDashboard['dashboard']['panels']) && count($fullDashboard['dashboard']['panels']) > 0 && isset($fullDashboard['dashboard']['panels'][0]['datasource'])) {
-                $panelDs = $fullDashboard['dashboard']['panels'][0]['datasource'];
-                $panelDs = is_array($panelDs) ? ($panelDs['uid'] ?? null) : $panelDs;
-            }
-            if (!$panelDs) {
-                $panelDs = $defaultDs;
-            }
-            $datasources = $api->getDatasources();
-            $dsMap = [];
-            foreach ($datasources as $ds) {
-                $dsMap[$ds['uid']] = $ds['id'];
-            }
-            $variables = $parser->parseVariables($fullDashboard['dashboard']);
-            $varMap = [];
-            foreach ($variables as $var) {
-                $varMap[$var['name']] = $var;
-            }
-            foreach ($variables as &$variable) {
-                if ($variable['type'] === 'query' && !isset($variable['datasource_type'])) {
-                    $refId = $variable['query']['refId'] ?? '';
-                    if (stripos($refId, 'Prometheus') !== false) {
-                        $variable['datasource_type'] = 'prometheus';
-                    } elseif (stripos($refId, 'Influx') !== false) {
-                        $variable['datasource_type'] = 'influxdb';
-                    } elseif (stripos($refId, 'ClickHouse') !== false) {
-                        $variable['datasource_type'] = 'grafana-clickhouse-datasource';
-                    } else {
-                        $variable['datasource_type'] = 'prometheus'; // default
-                    }
-                }
-                $varMap[$variable['name']] = $variable;
-            }
+    // Генерировать все комбинации
+    $allCombinations = [];
+    foreach ($result as $rootVar => $tree) {
+        $combs = generateCombinations($tree, $rootVar);
+        $allCombinations = array_merge($allCombinations, $combs);
+    }
 
-            $deps = $this->getDependencies($variables);
-            $sortedNames = $this->topologicalSort($variables, $deps);
-            $dependents = [];
-            foreach ($deps as $var => $depList) {
-                foreach ($depList as $dep) {
-                    if (!isset($dependents[$dep])) $dependents[$dep] = [];
-                    $dependents[$dep][] = $var;
-                }
-            }
+    // Извлечь запросы из панелей
+    $extractor = new QueryExtractor();
+    $panelQueries = $extractor->extractQueries($fullDashboard['dashboard']);
 
-
-            // Построить дерево для custom, constant, textbox переменных и независимых query переменных
-            $result = [];
-            $roots = array_filter($variables, function($variable) use ($deps) {
-                return ($variable['type'] === 'query' || $variable['type'] === 'custom' || $variable['type'] === 'constant' || $variable['type'] === 'textbox') && empty($deps[$variable['name']]);
-            });
-            foreach ($roots as $root) {
-                $result[$root['name']] = $this->buildTree($root['name'], $varMap, $dependents, $deps, $fetcher);
-            }
-
-            // Генерировать все комбинации
-            $allCombinations = [];
-            foreach ($result as $rootVar => $tree) {
-                $combs = $this->generateCombinations($tree, $rootVar);
-                $allCombinations = array_merge($allCombinations, $combs);
-            }
-
-            // Извлечь запросы из панелей
-            $extractor = new QueryExtractor();
-            $panelQueries = $extractor->extractQueries($fullDashboard['dashboard']);
-
-            // Обработать переменные из запросов: если не в templating, добавить как custom с default
-            $varsFromQueries = $extractor->extractVariablesFromQueries($panelQueries);
-            foreach ($varsFromQueries as $varName) {
-                if (!isset($varMap[$varName])) {
-                    $newVar = [
-                        'name' => $varName,
-                        'type' => 'custom',
-                        'query' => 'default',
-                        'datasource' => null,
-                        'options' => [['value' => 'default', 'text' => 'Default']]
-                    ];
-                    $variables[] = $newVar;
-                    $varMap[$varName] = $newVar;
-                }
-            }
-
-            // Пересчитать зависимости после добавления новых переменных
-            $deps = $this->getDependencies($variables);
-            $sortedNames = $this->topologicalSort($variables, $deps);
-
-            // Построить dependents
-            $dependents = [];
-            foreach ($deps as $var => $depList) {
-                foreach ($depList as $dep) {
-                    if (!isset($dependents[$dep])) $dependents[$dep] = [];
-                    $dependents[$dep][] = $var;
-                }
-            }
-
-            // Построить выходную структуру
-            $output = [];
-            foreach ($panelQueries as $panelId => $panelData) {
-                $output[$panelId] = [
-                    'title' => $panelData['title'],
-                    'queries' => []
-                ];
-                foreach ($panelData['queries'] as $query) {
-                    $queryCombinations = [];
-                    if (preg_match_all('/\$(\w+)/', $query, $matches)) {
-                        $varsInQuery = $matches[1];
-                        foreach ($allCombinations as $comb) {
-                            $valid = true;
-                            foreach ($varsInQuery as $var) {
-                                if (!isset($comb[$var])) {
-                                    $valid = false;
-                                    break;
-                                }
-                            }
-                            if ($valid) {
-                                $substituted = $query;
-                                foreach ($comb as $var => $val) {
-                                    $substituted = str_replace('$' . $var, (string)$val, $substituted);
-                                }
-                                $queryCombinations[] = [
-                                    'combination' => $comb,
-                                    'substituted_query' => $substituted
-                                ];
-                            }
-                        }
-                    } else {
-                        $queryCombinations[] = [
-                            'combination' => [],
-                            'substituted_query' => $query
-                        ];
-                    }
-                    $output[$panelId]['queries'][] = [
-                        'original' => $query,
-                        'datasource' => ['type' => 'prometheus', 'uid' => $defaultDs],
-                        'combinations' => $queryCombinations
-                    ];
-                }
-            }
-
-            return $output;
-        } catch (\Exception $e) {
-            $this->logger->error('Error in processVariables: ' . $e->getMessage());
-            return [];
+    // Обработать переменные из запросов: если не в templating, добавить как custom с default
+    $varsFromQueries = $extractor->extractVariablesFromQueries($panelQueries);
+    foreach ($varsFromQueries as $varName) {
+        if (!isset($varMap[$varName])) {
+            $newVar = [
+                'name' => $varName,
+                'type' => 'custom',
+                'query' => 'default',
+                'datasource' => null,
+                'options' => [['value' => 'default', 'text' => 'Default']]
+            ];
+            $variables[] = $newVar;
+            $varMap[$varName] = $newVar;
         }
     }
+
+    // Пересчитать зависимости после добавления новых переменных
+    $deps = getDependencies($variables);
+    $sortedNames = topologicalSort($variables, $deps);
+
+    // Построить dependents
+    $dependents = [];
+    foreach ($deps as $var => $depList) {
+        foreach ($depList as $dep) {
+            if (!isset($dependents[$dep])) $dependents[$dep] = [];
+            $dependents[$dep][] = $var;
+        }
+    }
+
+    // Построить выходную структуру
+    $output = [];
+    foreach ($panelQueries as $panelId => $panelData) {
+        $output[$panelId] = [
+            'title' => $panelData['title'],
+            'queries' => []
+        ];
+        foreach ($panelData['queries'] as $query) {
+            $queryCombinations = [];
+            if (preg_match_all('/\$(\w+)/', $query, $matches)) {
+                $varsInQuery = $matches[1];
+                foreach ($allCombinations as $comb) {
+                    $valid = true;
+                    foreach ($varsInQuery as $var) {
+                        if (!isset($comb[$var])) {
+                            $valid = false;
+                            break;
+                        }
+                    }
+                    if ($valid) {
+                        $substituted = $query;
+                        foreach ($comb as $var => $val) {
+                            $substituted = str_replace('$' . $var, $val, $substituted);
+                        }
+                        $queryCombinations[] = [
+                            'combination' => $comb,
+                            'substituted_query' => $substituted
+                        ];
+                    }
+                }
+            } else {
+                $queryCombinations[] = [
+                    'combination' => [],
+                    'substituted_query' => $query
+                ];
+            }
+            $output[$panelId]['queries'][] = [
+                'original' => $query,
+                'datasource' => ['type' => 'prometheus', 'uid' => $defaultDsUid],
+                'combinations' => $queryCombinations
+            ];
+        }
+    }
+
+    // Вывести структурированный JSON
+    echo json_encode($output, JSON_PRETTY_PRINT) . "\n";
+} catch (Exception $e) {
+    echo 'Error: ' . $e->getMessage();
 }

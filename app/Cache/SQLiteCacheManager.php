@@ -11,6 +11,7 @@ use App\Cache\SQLiteCacheMaintenance;
 use App\Cache\SQLiteCacheConfig;
 use App\Cache\GrafanaMetricsCache;
 use App\Cache\GrafanaInstanceCache;
+use App\Cache\GrafanaDashboardsCache;
 
 class SQLiteCacheManager implements CacheManagerInterface
 {
@@ -20,6 +21,7 @@ class SQLiteCacheManager implements CacheManagerInterface
     private SQLiteCacheConfig $configManager;
     private GrafanaMetricsCache $grafanaMetricsCache;
     private GrafanaInstanceCache $grafanaInstanceCache;
+    private GrafanaDashboardsCache $grafanaDashboardsCache;
     private LoggerInterface $logger;
     private int $maxTtl;
     private array $config;
@@ -38,6 +40,7 @@ class SQLiteCacheManager implements CacheManagerInterface
             $this->configManager = new SQLiteCacheConfig($logger);
             $this->grafanaMetricsCache = new GrafanaMetricsCache($this->dbManager, $logger);
             $this->grafanaInstanceCache = new GrafanaInstanceCache($this->dbManager, $logger);
+            $this->grafanaDashboardsCache = new GrafanaDashboardsCache($this->dbManager, $logger);
         } catch (Exception $e) {
             $this->logger->error("Ошибка инициализации SQLiteCacheManager: " . $e->getMessage());
             throw new Exception("Не удалось инициализировать кэш SQLite");
@@ -215,6 +218,17 @@ class SQLiteCacheManager implements CacheManagerInterface
     public function updateGrafanaIndividualMetrics(int $instanceId, array $metrics): bool
     {
         return $this->grafanaMetricsCache->updateMetricsCache($instanceId, $metrics);
+    }
+
+    // Grafana dashboards list cache
+    public function saveGrafanaDashboardsList(int $instanceId, array $dashboards): bool
+    {
+        return $this->grafanaDashboardsCache->saveDashboardsList($instanceId, $dashboards);
+    }
+
+    public function loadGrafanaDashboardsList(int $instanceId): ?array
+    {
+        return $this->grafanaDashboardsCache->loadDashboardsList($instanceId);
     }
 }
 ?>

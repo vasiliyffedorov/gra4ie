@@ -38,4 +38,9 @@ interface CacheManagerInterface
     public function getGrafanaInstanceByUrl(string $url): ?array;
 
     public function getGrafanaInstanceById(int $id): ?array;
+
+    // Grafana dashboards list cache
+    public function saveGrafanaDashboardsList(int $instanceId, array $dashboards): bool;
+
+    public function loadGrafanaDashboardsList(int $instanceId): ?array;
 }

@@ -181,13 +181,25 @@ class GrafanaProxyClient implements GrafanaClientInterface
      */
     private function initMetricsCache(): void
     {
-        $resp = $this->httpClient->request('GET', "{$this->grafanaUrl}/api/search?type=dash-db");
-        if (!$resp) {
-            $this->logger->error("Не удалось получить список дашбордов");
-            return;
+        // Сначала проверим кэш списка dashboards
+        $dashboards = $this->cacheManager->loadGrafanaDashboardsList($this->instanceId);
+        if ($dashboards === null) {
+            // Кэш пустой, запрашиваем у Grafana
+            $resp = $this->httpClient->request('GET', "{$this->grafanaUrl}/api/search?type=dash-db");
+            if (!$resp) {
+                $this->logger->error("Не удалось получить список дашбордов");
+                return;
+            }
+            $dashboards = json_decode($resp, true);
+            // Сохраняем в кэш
+            if ($this->cacheManager->saveGrafanaDashboardsList($this->instanceId, $dashboards)) {
+                $this->logger->info("Список dashboards сохранен в кэш для instance {$this->instanceId}");
+            } else {
+                $this->logger->warning("Не удалось сохранить список dashboards в кэш для instance {$this->instanceId}");
+            }
+        } else {
+            $this->logger->info("Список dashboards загружен из кэша для instance {$this->instanceId}");
         }
-
-        $dashboards = json_decode($resp, true);
         $this->metricsCache = []; // Reset
         foreach ($dashboards as $dash) {
             $uid   = $dash['uid'];

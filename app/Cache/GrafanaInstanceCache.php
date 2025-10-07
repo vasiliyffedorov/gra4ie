@@ -27,10 +27,19 @@ class GrafanaInstanceCache
             $token = $instance['token'];
             $blacklistUids = json_encode($instance['blacklist_uids'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
             $this->logger->info("Saving blacklist_uids to DB: " . $blacklistUids);
-            $stmt = $db->prepare("
-                INSERT OR REPLACE INTO grafana_instances (name, url, token, blacklist_uids)
-                VALUES (:name, :url, :token, :blacklist_uids)
-            ");
+            if ($this->instanceExistsByUrl($url)) {
+                // Update existing
+                $stmt = $db->prepare("
+                    UPDATE grafana_instances SET name = :name, token = :token, blacklist_uids = :blacklist_uids
+                    WHERE url = :url
+                ");
+            } else {
+                // Insert new
+                $stmt = $db->prepare("
+                    INSERT INTO grafana_instances (name, url, token, blacklist_uids)
+                    VALUES (:name, :url, :token, :blacklist_uids)
+                ");
+            }
             $stmt->execute([
                 ':name' => $name,
                 ':url' => $url,
