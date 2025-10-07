@@ -140,22 +140,21 @@ class DataFetcher {
     private $config;
     private $dsMap;
     private $dsNameMap;
-    private $defaultDsUid;
     private HttpClient $httpClient;
 
-    public function __construct(GrafanaAPI $api, Config $config, $dsMap, $datasources, $defaultDsUid = null) {
+    public function __construct(GrafanaAPI $api, Config $config, $dsMap, $dsNameMap = []) {
         $this->api = $api;
         $this->config = $config;
         $this->dsMap = $dsMap;
-        $this->dsNameMap = [];
-        foreach ($datasources as $ds) {
-            $this->dsNameMap[$ds['name']] = $ds['uid'];
-        }
-        $this->defaultDsUid = $defaultDsUid;
+        $this->dsNameMap = $dsNameMap;
         $this->httpClient = new HttpClient([
             'Authorization: Bearer ' . $this->config->token,
             'Content-Type: application/json'
         ], null);
+    }
+
+    public function getDefaultDatasourceUid() {
+        return 'deha3a4c2etq8d'; // prometheus
     }
 
     public function fetchOptions($variable, $datasource_type = null, $interpolatedQuery = null) {
@@ -165,14 +164,18 @@ class DataFetcher {
         $url = $this->config->url . '/api/ds/query';
         $query = $interpolatedQuery ?? ($variable['query']['query'] ?? $variable['query']);
         $datasourceUid = is_array($variable['datasource']) ? $variable['datasource']['uid'] : $variable['datasource'];
+        // If datasourceUid is not in dsMap, try to find by name
         if (!isset($this->dsMap[$datasourceUid])) {
             if (isset($this->dsNameMap[$datasourceUid])) {
                 $datasourceUid = $this->dsNameMap[$datasourceUid];
-            } elseif ($this->defaultDsUid) {
-                $datasourceUid = $this->defaultDsUid;
+            } else {
+                return []; // Return empty options if datasource not found
             }
         }
-        $datasourceId = $this->dsMap[$datasourceUid];
+        $datasourceId = $this->dsMap[$datasourceUid] ?? null;
+        if ($datasourceId === null) {
+            return []; // Return empty options if datasource not found
+        }
         if ($datasource_type === 'influxdb') {
             $queryObj = [
                 "refId" => "metricFindQuery",
@@ -192,60 +195,31 @@ class DataFetcher {
             ];
             $payload = [
                 "queries" => [$queryObj],
-                "from" => "1759535237053",
-                "to" => "1759556837053"
+                "from" => (string)((time() - 3600) * 1000),
+                "to" => (string)((time() + 3600) * 1000)
             ];
         } elseif ($datasource_type === 'prometheus') {
-            // Обработать query для label_values
-            $processed = str_replace(['label_values(', ')'], '', $query);
-            if (strpos($processed, ',') !== false) {
-                // metric, label
-                list($metric, $label) = explode(',', $processed, 2);
-                $metric = trim($metric);
-                $label = trim($label);
-                $url = $this->config->url . '/api/datasources/proxy/' . $datasourceId . '/api/v1/series?match[]=' . urlencode($metric);
-                $response = $this->httpClient->request('GET', $url);
-                if (!$response) {
-                    throw new DataFetchException('Failed to fetch options for variable ' . $variable['name']);
-                }
-                $data = json_decode($response, true);
-                if (json_last_error() !== JSON_ERROR_NONE) {
-                    throw new DataFetchException('JSON decode error: ' . json_last_error_msg());
-                }
-                // Парсить unique values of label
-                $values = [];
-                if (isset($data['data']) && is_array($data['data'])) {
-                    $unique = [];
-                    foreach ($data['data'] as $series) {
-                        if (isset($series[$label])) {
-                            $unique[$series[$label]] = true;
-                        }
-                    }
-                    foreach (array_keys($unique) as $val) {
-                        $values[] = ['value' => $val, 'text' => $val];
-                    }
-                }
-            } else {
-                // label only
-                $label = trim($processed);
-                $url = $this->config->url . '/api/datasources/proxy/' . $datasourceId . '/api/v1/label/' . urlencode($label) . '/values';
-                $response = $this->httpClient->request('GET', $url);
-                if (!$response) {
-                    throw new DataFetchException('Failed to fetch options for variable ' . $variable['name']);
-                }
-                $data = json_decode($response, true);
-                if (json_last_error() !== JSON_ERROR_NONE) {
-                    throw new DataFetchException('JSON decode error: ' . json_last_error_msg());
-                }
-                // Парсить как массив values
-                $values = [];
-                if (isset($data['data']) && is_array($data['data'])) {
-                    foreach ($data['data'] as $val) {
-                        $values[] = ['value' => $val, 'text' => $val];
-                    }
-                }
+            $expr = $query;
+            $refId = "metricFindQuery";
+            $rawQuery = false;
+            if (preg_match('/^label_values\(([^,]+),\s*([^)]+)\)$/', $query, $matches)) {
+                $metric = trim($matches[1]);
+                $label = trim($matches[2]);
+                $expr = "count by ($label) ($metric)";
+                $rawQuery = true;
             }
-            return $values;
+            $queryObj = [
+                "refId" => $refId,
+                "expr" => $expr,
+                "rawQuery" => $rawQuery,
+                "datasource" => ["type" => "prometheus", "uid" => $datasourceUid],
+                "datasourceId" => $datasourceId
+            ];
+            $payload = [
+                "queries" => [$queryObj],
+                "from" => (string)((time() - 3600) * 1000),
+                "to" => (string)((time() + 3600) * 1000)
+            ];
         } elseif ($datasource_type === 'grafana-clickhouse-datasource') {
             $queryObj = [
                 "rawSql" => $query,
@@ -257,8 +231,8 @@ class DataFetcher {
             ];
             $payload = [
                 "queries" => [$queryObj],
-                "from" => "1759535237053",
-                "to" => "1759556837053"
+                "from" => (string)((time() - 3600) * 1000),
+                "to" => (string)((time() + 3600) * 1000)
             ];
         } else {
             // Default to old behavior if needed, but according to task, only influxdb and prometheus
@@ -269,12 +243,14 @@ class DataFetcher {
             ];
             $payload = [
                 "queries" => [$queryObj],
-                "from" => "1759535237053",
-                "to" => "1759556837053"
+                "from" => (string)((time() - 3600) * 1000),
+                "to" => (string)((time() + 3600) * 1000)
             ];
         }
         $body = json_encode($payload);
+        echo "DEBUG: Sending to ds/query for variable {$variable['name']}: " . $body . "\n";
         $response = $this->httpClient->request('POST', $url, $body);
+        echo "DEBUG: Response for variable {$variable['name']}: " . $response . "\n";
         if (!$response) {
             throw new DataFetchException('Failed to fetch options for variable ' . $variable['name']);
         }
@@ -284,16 +260,44 @@ class DataFetcher {
         }
         // Extract values from /api/ds/query response
         $values = [];
-        $refId = $datasource_type === 'influxdb' ? 'metricFindQuery' : 'A';
-        if (isset($data['results'][$refId]['frames'][0]['data']['values'])) {
-            $rawValues = $data['results'][$refId]['frames'][0]['data']['values'];
-            if (is_array($rawValues) && isset($rawValues[0]) && is_array($rawValues[0])) {
-                foreach ($rawValues[0] as $val) {
+        // Find any refId in results
+        $refId = null;
+        if (isset($data['results']) && is_array($data['results'])) {
+            $refId = array_key_first($data['results']);
+        }
+        if ($refId === null) {
+            return $values; // No results
+        }
+        if ($datasource_type === 'prometheus') {
+            // For Prometheus, extract unique label values from frames
+            if (isset($data['results'][$refId]['frames'])) {
+                $unique = [];
+                foreach ($data['results'][$refId]['frames'] as $frame) {
+                    if (isset($frame['schema']['fields'])) {
+                        foreach ($frame['schema']['fields'] as $field) {
+                            if (isset($field['labels']) && is_array($field['labels'])) {
+                                foreach ($field['labels'] as $labelValue) {
+                                    $unique[$labelValue] = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                foreach (array_keys($unique) as $val) {
                     $values[] = ['value' => $val, 'text' => $val];
                 }
-            } elseif (is_array($rawValues)) {
-                foreach ($rawValues as $val) {
-                    $values[] = ['value' => $val, 'text' => $val];
+            }
+        } else {
+            if (isset($data['results'][$refId]['frames'][0]['data']['values'])) {
+                $rawValues = $data['results'][$refId]['frames'][0]['data']['values'];
+                if (is_array($rawValues) && isset($rawValues[0]) && is_array($rawValues[0])) {
+                    foreach ($rawValues[0] as $val) {
+                        $values[] = ['value' => $val, 'text' => $val];
+                    }
+                } elseif (is_array($rawValues)) {
+                    foreach ($rawValues as $val) {
+                        $values[] = ['value' => $val, 'text' => $val];
+                    }
                 }
             }
         }
@@ -525,7 +529,15 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
                 }
             }
         }
-        $fetcher = new DataFetcher($api, $config, $dsMap, $datasources, $defaultDs);
+        $fetcher = new DataFetcher($api, $config, $dsMap, $dsNameMap);
+        $getDsUidByType = function($type) use ($datasources) {
+            foreach ($datasources as $ds) {
+                if ($ds['type'] === $type) {
+                    return $ds['uid'];
+                }
+            }
+            return null;
+        };
 
         try {
             $fullDashboard = $api->getDashboard($dashboardUid);
@@ -558,6 +570,14 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
                         $variable['datasource_type'] = 'grafana-clickhouse-datasource';
                     } else {
                         $variable['datasource_type'] = 'prometheus'; // default
+                    }
+                }
+                if ($variable['type'] === 'query' && !$variable['datasource']) {
+                    $dsUid = $getDsUidByType($variable['datasource_type']);
+                    if ($dsUid) {
+                        $variable['datasource'] = ['type' => $variable['datasource_type'], 'uid' => $dsUid];
+                    } else {
+                        $variable['datasource'] = $defaultDs;
                     }
                 }
                 $varMap[$variable['name']] = $variable;
@@ -594,16 +614,16 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
             $extractor = new QueryExtractor();
             $panelQueries = $extractor->extractQueries($fullDashboard['dashboard']);
 
-            // Обработать переменные из запросов: если не в templating, добавить как custom с default
+            // Обработать переменные из запросов: если не в templating, добавить как custom
             $varsFromQueries = $extractor->extractVariablesFromQueries($panelQueries);
             foreach ($varsFromQueries as $varName) {
                 if (!isset($varMap[$varName])) {
                     $newVar = [
                         'name' => $varName,
                         'type' => 'custom',
-                        'query' => 'default',
+                        'query' => '',
                         'datasource' => null,
-                        'options' => [['value' => 'default', 'text' => 'Default']]
+                        'options' => []
                     ];
                     $variables[] = $newVar;
                     $varMap[$varName] = $newVar;
@@ -624,7 +644,15 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
             }
 
             // Построить выходную структуру
-            $output = [];
+            $output = [
+                'variables' => array_map(function($var) {
+                    return [
+                        'name' => $var['name'],
+                        'type' => $var['type'],
+                        'options' => $var['options']
+                    ];
+                }, $variables)
+            ];
             foreach ($panelQueries as $panelId => $panelData) {
                 $output[$panelId] = [
                     'title' => $panelData['title'],

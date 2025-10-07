@@ -218,6 +218,10 @@ class GrafanaProxyClient implements GrafanaClientInterface
 
             // Обработка вывода скрипта
             foreach ($output as $panelId => $panelData) {
+                // Пропустить 'variables', если есть
+                if ($panelId === 'variables' || !isset($panelData['title'])) {
+                    continue;
+                }
                 $panelTitle = $panelData['title'];
                 foreach ($panelData['queries'] as $queryData) {
                     $datasource = $queryData['datasource'];
