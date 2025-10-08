@@ -98,7 +98,8 @@ class VariableParser {
                 'type' => $var['type'],
                 'query' => isset($var['query']) ? $var['query'] : null,
                 'datasource' => isset($var['datasource']) ? $var['datasource'] : null,
-                'options' => isset($var['options']) ? $var['options'] : []
+                'options' => isset($var['options']) ? $var['options'] : [],
+                'regex' => isset($var['regex']) ? $var['regex'] : null
             ];
             if ($parsed['type'] === 'custom' && empty($parsed['options']) && isset($parsed['query'])) {
                 $values = array_map('trim', explode(',', $parsed['query']));
@@ -356,6 +357,19 @@ class DataFetcher {
             }
         }
         $this->logger->debug("Extracted values for {$variable['name']}: " . json_encode($values));
+        // Apply regex filtering if set
+        if (isset($variable['regex']) && $variable['regex']) {
+            $filtered = [];
+            foreach ($values as $opt) {
+                $val = $opt['value'];
+                if (@preg_match($variable['regex'], $val, $matches)) {
+                    $newVal = isset($matches[1]) ? $matches[1] : $matches[0];
+                    $filtered[] = ['value' => $newVal, 'text' => $newVal];
+                }
+            }
+            $values = $filtered;
+            $this->logger->debug("Filtered values for {$variable['name']} with regex {$variable['regex']}: " . json_encode($values));
+        }
         return $values;
     }
 
