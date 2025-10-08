@@ -50,10 +50,15 @@ class HttpClient
 
             $errorDetails = $err ?: "HTTP status $code";
             if ($code >= 400 && $resp) {
-                $errorDetails .= ", Body: " . substr($resp, 0, 500);
+                $errorDetails .= ", Body: " . $resp;
             }
             if ($this->logger) {
                 $this->logger->error("HTTP Error → $method $url (attempt " . ($retryCount + 1) . ")\nCode: $code, Error: $errorDetails");
+            }
+
+            // For client errors (4xx), return response to allow parsing errors
+            if ($code >= 400 && $code < 500 && $resp) {
+                return $resp;
             }
 
             $retryCount++;

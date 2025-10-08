@@ -96,11 +96,14 @@ class GrafanaProxyClient implements GrafanaClientInterface
 
         // Определяем тип datasource из кеша
         $this->lastDataSourceType = strtolower($info['datasource']['type'] ?? 'unknown');
+        $this->logger->debug("QueryRange for $metricName: datasource type = {$this->lastDataSourceType}, substituted_query = {$info['substituted_query']}");
 
         // Формируем запрос к /api/ds/query с substituted_query
         $fromMs = $start * 1000;
         $toMs   = $end   * 1000;
         $stepMs = (int)($step * 1000);
+
+        $dsType = strtolower($info['datasource']['type'] ?? 'unknown');
 
         $q = [
             'refId'         => 'A',
@@ -108,8 +111,67 @@ class GrafanaProxyClient implements GrafanaClientInterface
             'format'        => 'time_series',
             'intervalMs'    => $stepMs,
             'maxDataPoints' => ceil(($toMs - $fromMs) / $stepMs),
-            'expr'          => $info['substituted_query'], // Используем подставленный запрос
         ];
+
+        // Build query based on datasource type
+        if ($dsType === 'elasticsearch') {
+            $parsedQuery = json_decode($info['substituted_query'], true);
+            if ($parsedQuery === null) {
+                // It's a string, treat as Lucene query
+                $q['query'] = $info['substituted_query'];
+                // For time_series format, add bucketAggs and metrics
+                if ($q['format'] === 'time_series') {
+                    $interval = $this->calculateESInterval($stepMs);
+                    $q['bucketAggs'] = [
+                        [
+                            'field' => '@timestamp',
+                            'id' => '2',
+                            'settings' => [
+                                'interval' => $interval,
+                                'trimEdges' => '1'
+                            ],
+                            'type' => 'date_histogram'
+                        ]
+                    ];
+                    $q['metrics'] = [
+                        [
+                            'id' => '1',
+                            'type' => 'count'
+                        ]
+                    ];
+                    $q['timeField'] = '@timestamp';
+                    $this->logger->debug("Added bucketAggs and metrics for ES time_series Lucene query: interval={$interval}");
+                }
+            } else {
+                // Already JSON, assume it's DSL
+                $q['query'] = $info['substituted_query'];
+                // For time_series, if no aggs, add them
+                $dsl = $parsedQuery;
+                if ($q['format'] === 'time_series' && !isset($dsl['aggs'])) {
+                    $interval = $this->calculateESInterval($stepMs);
+                    $dsl["aggs"] = [
+                        "time_agg" => [
+                            "date_histogram" => [
+                                "field" => "@timestamp",
+                                "interval" => $interval,
+                                "format" => "yyyy-MM-dd HH:mm:ss"
+                            ]
+                        ]
+                    ];
+                    $q['query'] = json_encode($dsl);
+                    $this->logger->debug("Added aggs to DSL for ES time_series: {$q['query']}");
+                }
+            }
+        } elseif ($dsType === 'grafana-clickhouse-datasource') {
+            $q['rawSql'] = $info['substituted_query'];
+            $q['queryType'] = 'sql';
+            $q['format'] = 0; // Override format for ClickHouse
+            $q['selectedFormat'] = 0;
+            $q['meta'] = ['timezone' => 'Europe/Moscow'];
+            $q['datasourceId'] = $info['datasource']['id'] ?? null;
+        } else {
+            $q['expr'] = $info['substituted_query'];
+        }
 
         $queries = [$q];
 
@@ -162,18 +224,8 @@ class GrafanaProxyClient implements GrafanaClientInterface
     public function updateMetricsCache(): void
     {
         $this->initMetricsCache();
-        $metrics = [];
-        foreach ($this->metricsCache as $key => $data) {
-            $metrics[] = [
-                'metric_key' => $key,
-                'metric_data' => $data
-            ];
-        }
-        if ($this->cacheManager->updateGrafanaIndividualMetrics($this->instanceId, $metrics)) {
-            $this->logger->info("Кэш метрик Grafana обновлен и сохранен для instance {$this->instanceId}: " . implode(', ', array_keys($this->metricsCache)));
-        } else {
-            $this->logger->error("Ошибка сохранения кэша метрик Grafana после обновления для instance {$this->instanceId}");
-        }
+        // Метрики уже сохранены в initMetricsCache по частям
+        $this->logger->info("Кэш метрик Grafana обновлен для instance {$this->instanceId}");
     }
 
     /**
@@ -200,7 +252,13 @@ class GrafanaProxyClient implements GrafanaClientInterface
         } else {
             $this->logger->info("Список dashboards загружен из кэша для instance {$this->instanceId}");
         }
-        $this->metricsCache = []; // Reset
+
+        // Очистить старый кэш метрик
+        $this->cacheManager->updateGrafanaIndividualMetrics($this->instanceId, []);
+
+        $maxOptions = 50; // Можно взять из config
+        $maxCombinations = 1000;
+
         foreach ($dashboards as $dash) {
             $uid   = $dash['uid'];
             $title = $dash['title'] ?: $uid;
@@ -210,16 +268,26 @@ class GrafanaProxyClient implements GrafanaClientInterface
                 $this->logger->error("GrafanaVariableProcessor не установлен для instance {$this->instanceId}");
                 continue;
             }
-            $output = $this->variableProcessor->processVariables($this->grafanaUrl, $this->apiToken, $uid);
+            $output = $this->variableProcessor->processVariables($this->grafanaUrl, $this->apiToken, $uid, $maxOptions, $maxCombinations);
             if (empty($output)) {
                 $this->logger->warning("Не удалось обработать переменные для дашборда $uid");
                 continue;
             }
 
-            // Обработка вывода скрипта
+            // Обработка вывода скрипта и сохранение метрик по частям
             foreach ($output as $panelId => $panelData) {
                 // Пропустить 'variables', если есть
-                if ($panelId === 'variables' || !isset($panelData['title'])) {
+                if ($panelId === 'variables') {
+                    continue;
+                }
+                $this->logger->debug("Processing panel {$panelId} title: '{$panelData['title']}', type: '{$panelData['type']}'");
+                if (!isset($panelData['title'])) {
+                    $this->logger->info("Пропущена панель {$panelId} в дашборде $uid: title не установлен");
+                    continue;
+                }
+                // Пропустить панели, не являющиеся timeseries
+                if (($panelData['type'] ?? '') !== 'timeseries') {
+                    $this->logger->info("Пропущена панель {$panelId} в дашборде $uid: тип панели '{$panelData['type']}' не поддерживается");
                     continue;
                 }
                 $panelTitle = $panelData['title'];
@@ -235,21 +303,29 @@ class GrafanaProxyClient implements GrafanaClientInterface
                         $combination = $combData['combination'];
                         $substituted_query = $combData['substituted_query'];
                         $key = "{$title}, {$panelTitle}:" . json_encode($combination);
-                        $this->metricsCache[$key] = [
+                        $metricData = [
                             'dashboard_uid' => $uid,
                             'panel_id'      => $panelId,
                             'dash_title'    => $title,
                             'panel_title'   => $panelTitle,
+                            'type'          => $panelData['type'] ?? 'unknown',
                             'combination'   => $combination,
                             'substituted_query' => $substituted_query,
                             'datasource'    => $datasource,
                         ];
+                        // Сохранить метрику сразу в БД
+                        $this->cacheManager->saveGrafanaIndividualMetric($this->instanceId, $key, $metricData);
+                        $this->logger->info("Метрика {$key} для instance {$this->instanceId} сохранена в БД");
                     }
                 }
             }
+
+            // Очистить память после обработки дашборда
+            unset($output);
+            $this->logger->info("Обработан дашборд $uid, метрики сохранены");
         }
 
-        $this->logger->info("Кэш метрик Grafana инициализирован (временный): " . implode(', ', array_keys($this->metricsCache)));
+        $this->logger->info("Кэш метрик Grafana инициализирован для instance {$this->instanceId}");
     }
 
 
@@ -313,7 +389,16 @@ class GrafanaProxyClient implements GrafanaClientInterface
     {
         $out     = [];
         $results = $data['results'] ?? [];
+        $this->logger->debug("parseFrames data results keys: " . json_encode(array_keys($results)));
         foreach ($results as $frameSet) {
+            if (!isset($frameSet['frames'])) {
+                $this->logger->warning("No 'frames' key in frameSet for metric {$info['dash_title']}, {$info['panel_title']}: " . json_encode($frameSet));
+                continue;
+            }
+            if (!is_array($frameSet['frames'])) {
+                $this->logger->warning("'frames' is not array in frameSet for metric {$info['dash_title']}, {$info['panel_title']}: " . json_encode($frameSet['frames']));
+                continue;
+            }
             foreach ($frameSet['frames'] as $frame) {
                 if (!isset($frame['data']['values'][0]) || !isset($frame['schema']['fields'])) {
                     $this->logger->warning("Skipping frame without times or fields for metric {$info['dash_title']}, {$info['panel_title']}");
@@ -676,6 +761,27 @@ class GrafanaProxyClient implements GrafanaClientInterface
         $expr = $info['substituted_query'];
         $this->logger->info("Получен expr для $metricName: $expr");
         return $expr;
+    }
+
+    /**
+     * Calculates Elasticsearch date_histogram interval from stepMs.
+     */
+    private function calculateESInterval(int $stepMs): string
+    {
+        $stepSec = $stepMs / 1000;
+        if ($stepSec >= 86400) { // >= 1 day
+            $days = intval($stepSec / 86400);
+            return "{$days}d";
+        } elseif ($stepSec >= 3600) { // >= 1 hour
+            $hours = intval($stepSec / 3600);
+            return "{$hours}h";
+        } elseif ($stepSec >= 60) { // >= 1 min
+            $mins = intval($stepSec / 60);
+            return "{$mins}m";
+        } else {
+            $secs = intval($stepSec);
+            return "{$secs}s";
+        }
     }
 }
 ?>

@@ -390,8 +390,9 @@ class SQLiteCacheIO
             $labels = json_decode($row['labels_json'], true);
             if (isset($labels['unused_metric']) && $labels['unused_metric'] === 'true') {
                 $age = time() - $row['created_at'];
-                if ($age <= $this->maxTtl) {
-                    $this->logger->debug("shouldRecreateCache: unused_metric within TTL for query=$query, labels=$labelsJson, age=$age <= {$this->maxTtl}, returning false");
+                $dynamicTtl = isset($row['total_duration']) && $row['total_duration'] > 0 ? max(3600, $row['total_duration'] / 4) : $this->maxTtl; // минимум 1 час
+                if ($age <= $dynamicTtl) {
+                    $this->logger->debug("shouldRecreateCache: unused_metric within TTL for query=$query, labels=$labelsJson, age=$age <= {$dynamicTtl}, returning false");
                     return false;
                 }
             }
@@ -402,9 +403,10 @@ class SQLiteCacheIO
                 return true;
             }
             $age = time() - $row['created_at'];
-            if ($age > $this->maxTtl) {
-                $this->logger->info("Кэш устарел для запроса: $query. Возраст: $age секунд");
-                $this->logger->debug("shouldRecreateCache: cache expired for query=$query, labels=$labelsJson, age=$age > {$this->maxTtl}, returning true");
+            $dynamicTtl = isset($row['total_duration']) && $row['total_duration'] > 0 ? max(3600, $row['total_duration'] / 4) : $this->maxTtl; // минимум 1 час
+            if ($age > $dynamicTtl) {
+                $this->logger->info("Кэш устарел для запроса: $query. Возраст: $age секунд, TTL: $dynamicTtl сек");
+                $this->logger->debug("shouldRecreateCache: cache expired for query=$query, labels=$labelsJson, age=$age > {$dynamicTtl}, returning true");
                 return true;
             }
             if ($row['dft_rebuild_count'] > ($this->config['cache']['max_rebuild_count'] ?? 10)) {

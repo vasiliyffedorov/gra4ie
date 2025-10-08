@@ -89,7 +89,7 @@ class GrafanaAPI {
 class VariableParser {
     public function parseVariables($dashboard) {
         if (!isset($dashboard['templating']['list'])) {
-            throw new VariableParseException('No variables found in dashboard');
+            return []; // No variables, return empty array
         }
         $variables = [];
         foreach ($dashboard['templating']['list'] as $var) {
@@ -125,6 +125,8 @@ class VariableParser {
                         $parsed['datasource_type'] = 'influxdb';
                     } elseif (stripos($refId, 'ClickHouse') !== false) {
                         $parsed['datasource_type'] = 'grafana-clickhouse-datasource';
+                    } elseif (stripos($refId, 'Elasticsearch') !== false || stripos($refId, 'Elastic') !== false) {
+                        $parsed['datasource_type'] = 'elasticsearch';
                     }
                 }
             }
@@ -141,16 +143,20 @@ class DataFetcher {
     private $dsMap;
     private $dsNameMap;
     private HttpClient $httpClient;
+    private LoggerInterface $logger;
+    private int $maxOptionsPerVariable;
 
-    public function __construct(GrafanaAPI $api, Config $config, $dsMap, $dsNameMap = []) {
+    public function __construct(GrafanaAPI $api, Config $config, $dsMap, LoggerInterface $logger, $dsNameMap = [], $maxOptionsPerVariable = 100) {
         $this->api = $api;
         $this->config = $config;
         $this->dsMap = $dsMap;
+        $this->logger = $logger;
         $this->dsNameMap = $dsNameMap;
+        $this->maxOptionsPerVariable = $maxOptionsPerVariable;
         $this->httpClient = new HttpClient([
             'Authorization: Bearer ' . $this->config->token,
             'Content-Type: application/json'
-        ], null);
+        ], $this->logger);
     }
 
     public function getDefaultDatasourceUid() {
@@ -199,14 +205,34 @@ class DataFetcher {
                 "to" => (string)((time() + 3600) * 1000)
             ];
         } elseif ($datasource_type === 'prometheus') {
+            $this->logger->debug("Processing prometheus query: $query, datasource_type: $datasource_type");
             $expr = $query;
             $refId = "metricFindQuery";
             $rawQuery = false;
-            if (preg_match('/^label_values\(([^,]+),\s*([^)]+)\)$/', $query, $matches)) {
+            $this->logger->debug("Initial expr: $expr, rawQuery: $rawQuery");
+            $this->logger->debug("Final expr: $expr, rawQuery: $rawQuery");
+            if (preg_match('/^label_values\((.+),\s*([^)]+)\)$/', $query, $matches)) {
                 $metric = trim($matches[1]);
                 $label = trim($matches[2]);
                 $expr = "count by ($label) ($metric)";
                 $rawQuery = true;
+            } elseif (preg_match('/^query_result\((.+)\)$/', $query, $matches)) {
+                $expr = trim($matches[1]);
+                $rawQuery = true;
+            } elseif (preg_match('/^metrics\(([^)]+)\)$/', $query, $matches)) {
+                $regex = stripslashes(trim($matches[1]));
+                $expr = "count by (__name__) ({__name__=~\"$regex\"})";
+                $rawQuery = true;
+                $this->logger->debug("Matched metrics regex: $regex, new expr: $expr");
+            } elseif (preg_match('/count by \(([^!~]+)!~([^}]+)\},([^)]+)\) \(([^)]+)\)/', $query, $matches)) {
+                // Fix incorrect count by with !~ in label list
+                $label = trim($matches[1]);
+                $excludePattern = trim($matches[2]);
+                $label2 = trim($matches[3]);
+                $selector = trim($matches[4]);
+                $expr = "count by ($label) ($selector,{$label2}!~$excludePattern)";
+                $rawQuery = true;
+                $this->logger->debug("Fixed count by !~ syntax: original $query -> $expr");
             }
             $queryObj = [
                 "refId" => $refId,
@@ -234,6 +260,18 @@ class DataFetcher {
                 "from" => (string)((time() - 3600) * 1000),
                 "to" => (string)((time() + 3600) * 1000)
             ];
+        } elseif ($datasource_type === 'elasticsearch') {
+            $queryObj = [
+                "refId" => "A",
+                "query" => $query,
+                "datasource" => ["type" => "elasticsearch", "uid" => $datasourceUid],
+                "datasourceId" => $datasourceId
+            ];
+            $payload = [
+                "queries" => [$queryObj],
+                "from" => (string)((time() - 3600) * 1000),
+                "to" => (string)((time() + 3600) * 1000)
+            ];
         } else {
             // Default to old behavior if needed, but according to task, only influxdb and prometheus
             $queryObj = [
@@ -248,15 +286,24 @@ class DataFetcher {
             ];
         }
         $body = json_encode($payload);
-        echo "DEBUG: Sending to ds/query for variable {$variable['name']}: " . $body . "\n";
+        $this->logger->debug("Sending to ds/query for variable {$variable['name']}: " . $body);
         $response = $this->httpClient->request('POST', $url, $body);
-        echo "DEBUG: Response for variable {$variable['name']}: " . $response . "\n";
+        $this->logger->debug("Response for variable {$variable['name']}: " . $response);
         if (!$response) {
-            throw new DataFetchException('Failed to fetch options for variable ' . $variable['name']);
+            throw new DataFetchException('Failed to fetch options for variable ' . $variable['name'] . '. Request body: ' . $body);
         }
         $data = json_decode($response, true);
         if (json_last_error() !== JSON_ERROR_NONE) {
             throw new DataFetchException('JSON decode error: ' . json_last_error_msg());
+        }
+        // Check for errors in response
+        if (isset($data['results']) && is_array($data['results'])) {
+            foreach ($data['results'] as $result) {
+                if (isset($result['error'])) {
+                    $this->logger->warning("Datasource error for variable {$variable['name']}: " . $result['error']);
+                    return []; // Return empty options on error
+                }
+            }
         }
         // Extract values from /api/ds/query response
         $values = [];
@@ -317,6 +364,7 @@ class QueryExtractor {
             $panelId = $panel['id'];
             $panelTitle = $panel['title'] ?? 'Panel ' . $panelId;
             $panelQueries = [];
+            $panelDatasource = $panel['datasource'] ?? null;
             if (isset($panel['targets'])) {
                 foreach ($panel['targets'] as $target) {
                     $query = null;
@@ -324,6 +372,8 @@ class QueryExtractor {
                         $query = $target['expr'];
                     } elseif (isset($target['query'])) {
                         $query = $target['query'];
+                    } elseif (isset($target['rawSql'])) {
+                        $query = $target['rawSql'];
                     }
                     if ($query) {
                         $panelQueries[] = $query;
@@ -333,6 +383,8 @@ class QueryExtractor {
             if (!empty($panelQueries)) {
                 $queries[$panelId] = [
                     'title' => $panelTitle,
+                    'type' => $panel['type'] ?? 'unknown',
+                    'datasource' => $panelDatasource,
                     'queries' => $panelQueries
                 ];
             }
@@ -346,7 +398,9 @@ class QueryExtractor {
             foreach ($panelData['queries'] as $query) {
                 if (preg_match_all('/\$(\w+)/', $query, $matches)) {
                     foreach ($matches[1] as $var) {
-                        $allVariables[$var] = true;
+                        if (!str_starts_with($var, '__')) {
+                            $allVariables[$var] = true;
+                        }
                     }
                 }
             }
@@ -358,6 +412,7 @@ class QueryExtractor {
 class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
 {
     private LoggerInterface $logger;
+    private int $maxOptionsPerVariable;
 
     public function __construct(LoggerInterface $logger)
     {
@@ -413,24 +468,39 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
     }
 
     // Функция для генерации всех комбинаций переменных из дерева
-    private function generateCombinations($tree, $varName) {
+    private function generateCombinations($tree, $varName, $maxCombinations = 10000) {
         $combinations = [];
         foreach ($tree as $value => $subtree) {
+            if (count($combinations) >= $maxCombinations) {
+                $this->logger->warning("Reached max combinations limit ($maxCombinations) for variable $varName");
+                break;
+            }
             if ($subtree === null) {
                 $combinations[] = [$varName => $value];
             } elseif (is_array($subtree)) {
                 $subCombs = [[]];
                 foreach ($subtree as $depVar => $depTree) {
-                    $depCombs = $this->generateCombinations($depTree, $depVar);
+                    $depCombs = $this->generateCombinations($depTree, $depVar, $maxCombinations - count($combinations));
+                    if (empty($depCombs)) {
+                        // If no combinations for dependency, skip
+                        $subCombs = [];
+                        break;
+                    }
                     $newSubCombs = [];
                     foreach ($subCombs as $subComb) {
                         foreach ($depCombs as $depComb) {
+                            if (count($newSubCombs) + count($combinations) >= $maxCombinations) {
+                                break 2;
+                            }
                             $newSubCombs[] = array_merge($subComb, $depComb);
                         }
                     }
                     $subCombs = $newSubCombs;
                 }
                 foreach ($subCombs as $subComb) {
+                    if (count($combinations) >= $maxCombinations) {
+                        break;
+                    }
                     $combinations[] = array_merge([$varName => $value], $subComb);
                 }
             } else {
@@ -451,10 +521,15 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
         try {
             $options = $fetcher->fetchOptions($variable, $variable['datasource_type'] ?? null, $interpolatedQuery);
         } catch (\Exception $e) {
-            error_log("Error fetching options for $varName: " . $e->getMessage());
+            $this->logger->error("Error fetching options for $varName: " . $e->getMessage());
             $options = [];
         }
         $values = array_map(function($opt) { return $opt['value']; }, $options);
+        // Limit the number of options to prevent memory explosion
+        if (count($values) > $this->maxOptionsPerVariable) {
+            $values = array_slice($values, 0, $this->maxOptionsPerVariable);
+            $this->logger->warning("Limited options for variable {$variable['name']} to {$this->maxOptionsPerVariable}");
+        }
         if ($variable['type'] === 'custom') {
             // Для custom переменных с пустыми dependencies возвращаем опции напрямую
             if (!isset($dependents[$varName]) || empty($dependents[$varName])) {
@@ -504,8 +579,9 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
         }
     }
 
-    public function processVariables(string $url, string $token, string $dashboardUid): array
+    public function processVariables(string $url, string $token, string $dashboardUid, int $maxOptionsPerVariable = 100, int $maxCombinations = 10000): array
     {
+        $this->maxOptionsPerVariable = $maxOptionsPerVariable;
         $config = new Config($url, $token, $dashboardUid);
         $api = new GrafanaAPI($config);
         $parser = new VariableParser();
@@ -529,8 +605,12 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
                 }
             }
         }
-        $fetcher = new DataFetcher($api, $config, $dsMap, $dsNameMap);
-        $getDsUidByType = function($type) use ($datasources) {
+        $fetcher = new DataFetcher($api, $config, $dsMap, $this->logger, $dsNameMap, $maxOptionsPerVariable);
+        $getDsUidByType = function($type) use ($datasources, $defaultDs) {
+            if ($type === 'prometheus' && $defaultDs) {
+                // Use default datasource for Prometheus
+                return $defaultDs;
+            }
             foreach ($datasources as $ds) {
                 if ($ds['type'] === $type) {
                     return $ds['uid'];
@@ -572,14 +652,7 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
                         $variable['datasource_type'] = 'prometheus'; // default
                     }
                 }
-                if ($variable['type'] === 'query' && !$variable['datasource']) {
-                    $dsUid = $getDsUidByType($variable['datasource_type']);
-                    if ($dsUid) {
-                        $variable['datasource'] = ['type' => $variable['datasource_type'], 'uid' => $dsUid];
-                    } else {
-                        $variable['datasource'] = $defaultDs;
-                    }
-                }
+                // Datasource устанавливается ниже на основе панелей
                 $varMap[$variable['name']] = $variable;
             }
 
@@ -606,8 +679,12 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
             // Генерировать все комбинации
             $allCombinations = [];
             foreach ($result as $rootVar => $tree) {
-                $combs = $this->generateCombinations($tree, $rootVar);
+                $combs = $this->generateCombinations($tree, $rootVar, $maxCombinations - count($allCombinations));
                 $allCombinations = array_merge($allCombinations, $combs);
+                if (count($allCombinations) >= $maxCombinations) {
+                    $this->logger->warning("Stopped generating combinations at limit $maxCombinations");
+                    break;
+                }
             }
 
             // Извлечь запросы из панелей
@@ -627,6 +704,41 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
                     ];
                     $variables[] = $newVar;
                     $varMap[$varName] = $newVar;
+                }
+            }
+
+            // Определить datasource для query переменных на основе панелей
+            $varDatasourceMap = [];
+            foreach ($panelQueries as $panelId => $panelData) {
+                $panelDs = $panelData['datasource'] ?? $defaultDs;
+                $dsUid = is_array($panelDs) ? ($panelDs['uid'] ?? null) : $panelDs;
+                foreach ($panelData['queries'] as $query) {
+                    if (preg_match_all('/\$(\w+)/', $query, $matches)) {
+                        foreach ($matches[1] as $var) {
+                            if (!isset($varDatasourceMap[$var])) {
+                                $varDatasourceMap[$var] = [];
+                            }
+                            $varDatasourceMap[$var][] = $dsUid;
+                        }
+                    }
+                }
+            }
+            // Для каждого query переменной без datasource выбрать datasource из панелей
+            foreach ($variables as &$variable) {
+                if ($variable['type'] === 'query' && !$variable['datasource'] && isset($varDatasourceMap[$variable['name']])) {
+                    $possibleDs = array_unique($varDatasourceMap[$variable['name']]);
+                    // Выбрать первый (или можно выбрать default если есть)
+                    $variable['datasource'] = $possibleDs[0] ?? $defaultDs;
+                    // Установить datasource_type если не установлен
+                    if (!isset($variable['datasource_type'])) {
+                        // Найти type по uid
+                        foreach ($datasources as $ds) {
+                            if ($ds['uid'] === $variable['datasource']) {
+                                $variable['datasource_type'] = $ds['type'];
+                                break;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -656,29 +768,53 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
             foreach ($panelQueries as $panelId => $panelData) {
                 $output[$panelId] = [
                     'title' => $panelData['title'],
+                    'type' => $panelData['type'] ?? 'unknown',
                     'queries' => []
                 ];
+                $panelDs = $panelData['datasource'] ?? ['type' => 'prometheus', 'uid' => $defaultDs];
+                if (is_array($panelDs)) {
+                    $panelDsType = $panelDs['type'] ?? 'prometheus';
+                    $panelDsUid = $panelDs['uid'] ?? $defaultDs;
+                } else {
+                    $panelDsType = 'prometheus'; // fallback
+                    $panelDsUid = $panelDs ?: $defaultDs;
+                }
+                $this->logger->debug("Panel $panelId datasource: type=$panelDsType, uid=$panelDsUid");
                 foreach ($panelData['queries'] as $query) {
                     $queryCombinations = [];
                     if (preg_match_all('/\$(\w+)/', $query, $matches)) {
                         $varsInQuery = $matches[1];
-                        foreach ($allCombinations as $comb) {
-                            $valid = true;
-                            foreach ($varsInQuery as $var) {
-                                if (!isset($comb[$var])) {
-                                    $valid = false;
-                                    break;
-                                }
+                        $hasRealVars = false;
+                        foreach ($varsInQuery as $var) {
+                            if (!str_starts_with($var, '__')) {
+                                $hasRealVars = true;
+                                break;
                             }
-                            if ($valid) {
-                                $substituted = $query;
-                                foreach ($comb as $var => $val) {
-                                    $substituted = str_replace('$' . $var, (string)$val, $substituted);
+                        }
+                        if (!$hasRealVars) {
+                            $queryCombinations[] = [
+                                'combination' => [],
+                                'substituted_query' => $query
+                            ];
+                        } else {
+                            foreach ($allCombinations as $comb) {
+                                $valid = true;
+                                foreach ($varsInQuery as $var) {
+                                    if (!isset($comb[$var])) {
+                                        $valid = false;
+                                        break;
+                                    }
                                 }
-                                $queryCombinations[] = [
-                                    'combination' => $comb,
-                                    'substituted_query' => $substituted
-                                ];
+                                if ($valid) {
+                                    $substituted = $query;
+                                    foreach ($comb as $var => $val) {
+                                        $substituted = str_replace('$' . $var, (string)$val, $substituted);
+                                    }
+                                    $queryCombinations[] = [
+                                        'combination' => $comb,
+                                        'substituted_query' => $substituted
+                                    ];
+                                }
                             }
                         }
                     } else {
@@ -689,7 +825,7 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
                     }
                     $output[$panelId]['queries'][] = [
                         'original' => $query,
-                        'datasource' => ['type' => 'prometheus', 'uid' => $defaultDs],
+                        'datasource' => ['type' => $panelDsType, 'uid' => $panelDsUid],
                         'combinations' => $queryCombinations
                     ];
                 }

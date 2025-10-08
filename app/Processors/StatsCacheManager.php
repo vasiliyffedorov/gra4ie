@@ -73,8 +73,8 @@ class StatsCacheManager {
         if (empty($query) || empty($labelsJson)) {
             throw new \InvalidArgumentException('Query and labelsJson must not be empty');
         }
-        if (!isset($currentConfig['corrdor_params']['step']) || !isset($currentConfig['corrdor_params']['min_data_points'])) {
-            throw new \InvalidArgumentException('Config must contain corrdor_params.step and min_data_points');
+        if (!isset($currentConfig['corrdor_params']['step'])) {
+            throw new \InvalidArgumentException('Config must contain corrdor_params.step');
         }
 
         // Если метрика помечена как unused — ничего не делаем
@@ -265,19 +265,6 @@ class StatsCacheManager {
         $longEnd = $range['end'];
         $longStep = $currentConfig['corrdor_params']['step'];
 
-        $minPts = $currentConfig['corrdor_params']['min_data_points'];
-        $historyCount = count($historyData);
-        if ($historyCount < $minPts) {
-            $this->logger->warning("Недостаточно долгосрочных данных: {$historyCount} < {$minPts}, fallback to live (possible issue with short periods)");
-            if ($optimalPeriodDays !== null && $optimalPeriodDays <= 7) {
-                $this->logger->warning("Fallback triggered for short period {$optimalPeriodDays} days due to insufficient data for {$labelsJson}");
-            }
-            // For additional metrics, we don't have liveData, so build placeholder
-            $this->logger->warning("No live data for fallback, placeholder for {$labelsJson}");
-            $payload = $this->buildPlaceholder($query, $labelsJson, $longStart, $longEnd, $longStep);
-            $this->cacheManager->saveToCache($query, $labelsJson, $payload, $currentConfig);
-            return $payload;
-        }
 
         // Проверить необходимость пересоздания кеша DFT
         $cached = $this->cacheManager->loadFromCache($query, $labelsJson);
@@ -344,22 +331,12 @@ class StatsCacheManager {
             $historyData = array_filter($historyData, fn($point) => $point['time'] >= $cutStart);
             usort($historyData, fn($a, $b) => $a['time'] <=> $b['time']);
             $this->logger->info("After L1 trimming: count=" . count($historyData));
-            if (count($historyData) < $minPts) {
-                $this->logger->warning("Недостаточно данных после подрезки по L1 периоду, fallback на preprocessed без подрезки для {$labelsJson}");
-                if ($optimalPeriodDays <= 7) {
-                    $this->logger->warning("Fallback after short period L1 trimming for {$labelsJson}");
-                }
-                $historyData = $originalHistoryData;
-                $longStart = $originalLongStart;
-                $longEnd = $originalLongEnd;
-            } else {
-                $range = $this->dataProcessor->getActualDataRange($historyData);
-                $longStart = $range['start'];
-                $longEnd = $range['end'];
-                $this->logger->info("Подрезка по L1 периоду для {$labelsJson}: {$optimalPeriodDays} дней, точек с " . count($originalHistoryData) . " до " . count($historyData));
-                if ($optimalPeriodDays <= 7) {
-                    $this->logger->info("Short period (<=7d) trimming applied for {$labelsJson}");
-                }
+            $range = $this->dataProcessor->getActualDataRange($historyData);
+            $longStart = $range['start'];
+            $longEnd = $range['end'];
+            $this->logger->info("Подрезка по L1 периоду для {$labelsJson}: {$optimalPeriodDays} дней, точек с " . count($originalHistoryData) . " до " . count($historyData));
+            if ($optimalPeriodDays <= 7) {
+                $this->logger->info("Short period (<=7d) trimming applied for {$labelsJson}");
             }
         } else {
             $this->logger->info("Using optimalPeriodDays for {$labelsJson}: {$optimalPeriodDays} days");
@@ -372,22 +349,12 @@ class StatsCacheManager {
             $historyData = array_filter($historyData, fn($point) => $point['time'] >= $cutStart);
             usort($historyData, fn($a, $b) => $a['time'] <=> $b['time']);
             $this->logger->info("After optimizer trimming: count=" . count($historyData));
-            if (count($historyData) < $minPts) {
-                $this->logger->warning("Недостаточно данных после optimizer подрезки, fallback на preprocessed без подрезки для {$labelsJson}");
-                if ($optimalPeriodDays <= 7) {
-                    $this->logger->warning("Fallback after short period optimizer trimming for {$labelsJson}");
-                }
-                $historyData = $originalHistoryData;
-                $longStart = $originalLongStart;
-                $longEnd = $originalLongEnd;
-            } else {
-                $range = $this->dataProcessor->getActualDataRange($historyData);
-                $longStart = $range['start'];
-                $longEnd = $range['end'];
-                $this->logger->info("Optimizer подрезка для {$labelsJson}: период {$optimalPeriodDays} дней, точек с " . count($originalHistoryData) . " до " . count($historyData));
-                if ($optimalPeriodDays <= 7) {
-                    $this->logger->info("Short period (<=7d) optimizer trimming applied for {$labelsJson}");
-                }
+            $range = $this->dataProcessor->getActualDataRange($historyData);
+            $longStart = $range['start'];
+            $longEnd = $range['end'];
+            $this->logger->info("Optimizer подрезка для {$labelsJson}: период {$optimalPeriodDays} дней, точек с " . count($originalHistoryData) . " до " . count($historyData));
+            if ($optimalPeriodDays <= 7) {
+                $this->logger->info("Short period (<=7d) optimizer trimming applied for {$labelsJson}");
             }
         }
 
@@ -395,11 +362,6 @@ class StatsCacheManager {
         $currentConfig['historical_period_days'] = $optimalPeriodDays;
         unset($currentConfig['historical_period_days']);
 
-        // Адаптивный min_data_points
-        if ($optimalPeriodDays !== null) {
-            $currentConfig['corrdor_params']['min_data_points'] = $optimalPeriodDays <= 7 ? 5 : 50;
-            $this->logger->info("Adaptive min_data_points for period {$optimalPeriodDays} days: " . $currentConfig['corrdor_params']['min_data_points']);
-        }
 
         // Автоматическое определение необходимости масштабирования (обобщённый алгоритм по последним 100 ненулевым точкам)
         // 1) Берём последние 100 ненулевых/не-NaN точек из historyData на шаге S = $longStep

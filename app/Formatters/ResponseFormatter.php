@@ -76,17 +76,12 @@ class ResponseFormatter {
             return ['status' => 'error', 'data' => ['message' => 'Invalid query']];
         }
         if (empty($results)) {
-            $this->logger->warning("Empty results for query '$query', returning empty matrix with nodata");
+            $this->logger->warning("Empty results for query '$query', returning empty matrix");
             return [
                 'status' => 'success',
                 'data' => [
                     'resultType' => 'matrix',
-                    'result' => [
-                        [
-                            'metric' => ['__name__' => 'nodata', 'original_query' => $query],
-                            'values' => [[time(), '1']] // Flag nodata
-                        ]
-                    ]
+                    'result' => []
                 ]
             ];
         }

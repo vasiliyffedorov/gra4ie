@@ -263,8 +263,8 @@ class CorridorBuilder
                 'anomaly_concern_below_sum'=> $belowS,
                 'dft_rebuild_count'        => $cached['meta']['dft_rebuild_count'] ?? 0,
             ];
-    
-            if (empty($orig)) {
+
+            if (!empty($cached) && empty($orig)) {
                 $item['nodata'] = [['time' => time(), 'value' => 1.0]];
                 $this->logger->info("Added nodata flag for query: $query, labels: $labelsJson");
             }
