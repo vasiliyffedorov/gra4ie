@@ -259,6 +259,25 @@ class GrafanaProxyClient implements GrafanaClientInterface
         $maxOptions = 50; // Можно взять из config
         $maxCombinations = 1000;
 
+        // Получить default datasource
+        $api = new \App\Processors\GrafanaAPI(new \App\Processors\Config($this->grafanaUrl, $this->apiToken, ''));
+        $datasources = $api->getDatasources();
+        $defaultDs = null;
+        foreach ($datasources as $ds) {
+            if ($ds['isDefault']) {
+                $defaultDs = $ds['uid'];
+                break;
+            }
+        }
+        if (!$defaultDs) {
+            foreach ($datasources as $ds) {
+                if ($ds['type'] === 'prometheus') {
+                    $defaultDs = $ds['uid'];
+                    break;
+                }
+            }
+        }
+
         foreach ($dashboards as $dash) {
             $uid   = $dash['uid'];
             $title = $dash['title'] ?: $uid;
@@ -268,13 +287,35 @@ class GrafanaProxyClient implements GrafanaClientInterface
                 $this->logger->error("GrafanaVariableProcessor не установлен для instance {$this->instanceId}");
                 continue;
             }
-            $output = $this->variableProcessor->processVariables($this->grafanaUrl, $this->apiToken, $uid, $maxOptions, $maxCombinations);
-            if (empty($output)) {
+            $result = $this->variableProcessor->processVariables($this->grafanaUrl, $this->apiToken, $uid, $maxOptions, $maxCombinations);
+            if (empty($result) || !is_array($result)) {
                 $this->logger->warning("Не удалось обработать переменные для дашборда $uid");
                 continue;
             }
+            $output = $result['output'];
+            $allCombinations = $result['allCombinations'] ?? [];
 
             // Обработка вывода скрипта и сохранение метрик по частям
+            // Добавить фиктивную панель для переменных
+            if (isset($output['variables'])) {
+                $variablesPanel = [
+                    'title' => 'Variables',
+                    'type' => 'timeseries',
+                    'queries' => []
+                ];
+                // Генерировать combinations из allCombinations
+                $variablesPanel['queries'][] = [
+                    'original' => '',
+                    'datasource' => ['type' => 'prometheus', 'uid' => $defaultDs],
+                    'combinations' => array_map(function($comb) {
+                        return [
+                            'combination' => $comb,
+                            'substituted_query' => json_encode($comb)
+                        ];
+                    }, $allCombinations)
+                ];
+                $output['variables_panel'] = $variablesPanel;
+            }
             foreach ($output as $panelId => $panelData) {
                 // Пропустить 'variables', если есть
                 if ($panelId === 'variables') {

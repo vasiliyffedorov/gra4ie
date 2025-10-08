@@ -70,13 +70,7 @@ Gra4ie имитирует Prometheus API для интеграции с Grafana 
 
 ## Подготовка к запуску
 
-Перед первым запуском сервера необходимо обновить кэш метрик Grafana, чтобы избежать запросов к API при каждом обращении:
-
-```
-php bin/update_dashboards_cache.php
-```
-
-Эта команда загрузит список дашбордов и панелей из Grafana и сохранит их в кэше SQLite. Рекомендуется запускать её периодически (например, раз в день), если дашборды изменяются.
+Кэш метрик Grafana обновляется автоматически при первом запросе, если он пустой. Для ручного обновления используйте другие CLI-скрипты или перезапустите сервер.
 
 ## Запуск
 
@@ -98,9 +92,9 @@ php -S 0.0.0.0:9093
 
 ### CLI-скрипты
 
-- `php bin/update_dashboards_cache.php`: Обновляет кэш метрик из Grafana (запускайте периодически).
 - `php bin/test_psr_cache.php`: Тестирует функциональность PSR-16 кэша.
 - `php bin/check_dangerous_metrics.php`: Проверяет метрики на наличие опасных аномалий.
+- `php bin/update_cache_for_metric.php <metric_name>`: Обновляет кэш для конкретной метрики.
 
 Для тестирования: Проверьте логи (если настроено) и кэш в указанном пути.
 
@@ -146,7 +140,7 @@ composer test
 - `app/`: Основной код (Cache, Clients, DI, Formatters, Interfaces, Processors, Utilities).
 - `tests/`: PHPUnit-тесты для ключевых классов (DFTProcessorTest.php, etc.).
 - `config/`: config.cfg — плоский INI с вложенными ключами для конфигурации.
-- `bin/`: CLI-скрипты для обслуживания (update_dashboards_cache.php, test_psr_cache.php, check_dangerous_metrics.php).
+- `bin/`: CLI-скрипты для обслуживания (test_psr_cache.php, check_dangerous_metrics.php, update_cache_for_metric.php).
 - `examples/`: Скриншоты демонстрации работы.
 - Корневые файлы: index.php (HTTP-сервер), composer.json/lock, README.md, .gitignore, php-cs-fixer.dist.php.
 

@@ -167,14 +167,19 @@ class DataFetcher {
         if ($variable['type'] !== 'query') {
             return $variable['options'];
         }
+        $this->logger->debug("Fetching options for variable {$variable['name']}, type: {$variable['type']}, datasource_type: $datasource_type, query: " . json_encode($variable['query']));
         $url = $this->config->url . '/api/ds/query';
         $query = $interpolatedQuery ?? ($variable['query']['query'] ?? $variable['query']);
         $datasourceUid = is_array($variable['datasource']) ? $variable['datasource']['uid'] : $variable['datasource'];
+        $this->logger->debug("datasourceUid for {$variable['name']}: " . json_encode($datasourceUid));
         // If datasourceUid is not in dsMap, try to find by name
         if (!isset($this->dsMap[$datasourceUid])) {
+            $this->logger->debug("dsMap does not have $datasourceUid for {$variable['name']}, dsMap keys: " . json_encode(array_keys($this->dsMap)));
             if (isset($this->dsNameMap[$datasourceUid])) {
                 $datasourceUid = $this->dsNameMap[$datasourceUid];
+                $this->logger->debug("Found in dsNameMap, new datasourceUid: $datasourceUid");
             } else {
+                $this->logger->debug("Not found in dsNameMap, returning empty for {$variable['name']}");
                 return []; // Return empty options if datasource not found
             }
         }
@@ -286,7 +291,8 @@ class DataFetcher {
             ];
         }
         $body = json_encode($payload);
-        $this->logger->debug("Sending to ds/query for variable {$variable['name']}: " . $body);
+        $this->logger->debug("About to send request for {$variable['name']}, url: $url, body length: " . strlen($body));
+        $this->logger->debug("Sending to ds/query for variable {$variable['name']}: " . substr($body, 0, 200));
         $response = $this->httpClient->request('POST', $url, $body);
         $this->logger->debug("Response for variable {$variable['name']}: " . $response);
         if (!$response) {
@@ -296,6 +302,7 @@ class DataFetcher {
         if (json_last_error() !== JSON_ERROR_NONE) {
             throw new DataFetchException('JSON decode error: ' . json_last_error_msg());
         }
+        $this->logger->debug("Parsed response data for {$variable['name']}: " . json_encode($data));
         // Check for errors in response
         if (isset($data['results']) && is_array($data['results'])) {
             foreach ($data['results'] as $result) {
@@ -348,6 +355,7 @@ class DataFetcher {
                 }
             }
         }
+        $this->logger->debug("Extracted values for {$variable['name']}: " . json_encode($values));
         return $values;
     }
 
@@ -525,6 +533,10 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
             $options = [];
         }
         $values = array_map(function($opt) { return $opt['value']; }, $options);
+        // If no options, add empty string to generate at least one combination
+        if (empty($values)) {
+            $values = [""];
+        }
         // Limit the number of options to prevent memory explosion
         if (count($values) > $this->maxOptionsPerVariable) {
             $values = array_slice($values, 0, $this->maxOptionsPerVariable);
@@ -586,6 +598,7 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
         $api = new GrafanaAPI($config);
         $parser = new VariableParser();
         $datasources = $api->getDatasources();
+        $this->logger->info("Fetched datasources: " . json_encode($datasources));
         $dsMap = [];
         $dsNameMap = [];
         $defaultDs = null;
@@ -596,6 +609,7 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
                 $defaultDs = $ds['uid'];
             }
         }
+        $this->logger->info("defaultDs: $defaultDs, dsMap keys: " . json_encode(array_keys($dsMap)));
         if (!$defaultDs) {
             // Fallback to first prometheus datasource
             foreach ($datasources as $ds) {
@@ -666,81 +680,95 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
                 }
             }
 
-
-            // Построить дерево для custom, constant, textbox переменных и независимых query переменных
-            $result = [];
-            $roots = array_filter($variables, function($variable) use ($deps) {
-                return ($variable['type'] === 'query' || $variable['type'] === 'custom' || $variable['type'] === 'constant' || $variable['type'] === 'textbox') && empty($deps[$variable['name']]);
-            });
-            foreach ($roots as $root) {
-                $result[$root['name']] = $this->buildTree($root['name'], $varMap, $dependents, $deps, $fetcher);
+// Для оставшихся query переменных без datasource установить default datasource
+foreach ($variables as &$variable) {
+    if ($variable['type'] === 'query' && !$variable['datasource']) {
+        $variable['datasource'] = $defaultDs;
+        // Установить datasource_type
+        foreach ($datasources as $ds) {
+            if ($ds['uid'] === $defaultDs) {
+                $variable['datasource_type'] = $ds['type'];
+                break;
             }
+        }
+        $varMap[$variable['name']] = $variable;
+    }
+}
 
-            // Генерировать все комбинации
-            $allCombinations = [];
-            foreach ($result as $rootVar => $tree) {
-                $combs = $this->generateCombinations($tree, $rootVar, $maxCombinations - count($allCombinations));
-                $allCombinations = array_merge($allCombinations, $combs);
-                if (count($allCombinations) >= $maxCombinations) {
-                    $this->logger->warning("Stopped generating combinations at limit $maxCombinations");
+// Построить дерево для custom, constant, textbox переменных и независимых query переменных
+$result = [];
+$roots = array_filter($variables, function($variable) use ($deps) {
+    return ($variable['type'] === 'query' || $variable['type'] === 'custom' || $variable['type'] === 'constant' || $variable['type'] === 'textbox') && empty($deps[$variable['name']]);
+});
+foreach ($roots as $root) {
+    $result[$root['name']] = $this->buildTree($root['name'], $varMap, $dependents, $deps, $fetcher);
+}
+
+// Генерировать все комбинации
+$allCombinations = [];
+foreach ($result as $rootVar => $tree) {
+    $combs = $this->generateCombinations($tree, $rootVar, $maxCombinations - count($allCombinations));
+    $allCombinations = array_merge($allCombinations, $combs);
+    if (count($allCombinations) >= $maxCombinations) {
+        $this->logger->warning("Stopped generating combinations at limit $maxCombinations");
+        break;
+    }
+}
+
+// Извлечь запросы из панелей
+$extractor = new QueryExtractor();
+$panelQueries = $extractor->extractQueries($fullDashboard['dashboard']);
+
+// Обработать переменные из запросов: если не в templating, добавить как custom
+$varsFromQueries = $extractor->extractVariablesFromQueries($panelQueries);
+foreach ($varsFromQueries as $varName) {
+    if (!isset($varMap[$varName])) {
+        $newVar = [
+            'name' => $varName,
+            'type' => 'custom',
+            'query' => '',
+            'datasource' => null,
+            'options' => []
+        ];
+        $variables[] = $newVar;
+        $varMap[$varName] = $newVar;
+    }
+}
+
+// Определить datasource для query переменных на основе панелей
+$varDatasourceMap = [];
+foreach ($panelQueries as $panelId => $panelData) {
+    $panelDs = $panelData['datasource'] ?? $defaultDs;
+    $dsUid = is_array($panelDs) ? ($panelDs['uid'] ?? null) : $panelDs;
+    foreach ($panelData['queries'] as $query) {
+        if (preg_match_all('/\$(\w+)/', $query, $matches)) {
+            foreach ($matches[1] as $var) {
+                if (!isset($varDatasourceMap[$var])) {
+                    $varDatasourceMap[$var] = [];
+                }
+                $varDatasourceMap[$var][] = $dsUid;
+            }
+        }
+    }
+}
+// Для каждого query переменной без datasource выбрать datasource из панелей
+foreach ($variables as &$variable) {
+    if ($variable['type'] === 'query' && !$variable['datasource'] && isset($varDatasourceMap[$variable['name']])) {
+        $possibleDs = array_unique($varDatasourceMap[$variable['name']]);
+        // Выбрать первый (или можно выбрать default если есть)
+        $variable['datasource'] = $possibleDs[0] ?? $defaultDs;
+        // Установить datasource_type если не установлен
+        if (!isset($variable['datasource_type'])) {
+            // Найти type по uid
+            foreach ($datasources as $ds) {
+                if ($ds['uid'] === $variable['datasource']) {
+                    $variable['datasource_type'] = $ds['type'];
                     break;
                 }
             }
-
-            // Извлечь запросы из панелей
-            $extractor = new QueryExtractor();
-            $panelQueries = $extractor->extractQueries($fullDashboard['dashboard']);
-
-            // Обработать переменные из запросов: если не в templating, добавить как custom
-            $varsFromQueries = $extractor->extractVariablesFromQueries($panelQueries);
-            foreach ($varsFromQueries as $varName) {
-                if (!isset($varMap[$varName])) {
-                    $newVar = [
-                        'name' => $varName,
-                        'type' => 'custom',
-                        'query' => '',
-                        'datasource' => null,
-                        'options' => []
-                    ];
-                    $variables[] = $newVar;
-                    $varMap[$varName] = $newVar;
-                }
-            }
-
-            // Определить datasource для query переменных на основе панелей
-            $varDatasourceMap = [];
-            foreach ($panelQueries as $panelId => $panelData) {
-                $panelDs = $panelData['datasource'] ?? $defaultDs;
-                $dsUid = is_array($panelDs) ? ($panelDs['uid'] ?? null) : $panelDs;
-                foreach ($panelData['queries'] as $query) {
-                    if (preg_match_all('/\$(\w+)/', $query, $matches)) {
-                        foreach ($matches[1] as $var) {
-                            if (!isset($varDatasourceMap[$var])) {
-                                $varDatasourceMap[$var] = [];
-                            }
-                            $varDatasourceMap[$var][] = $dsUid;
-                        }
-                    }
-                }
-            }
-            // Для каждого query переменной без datasource выбрать datasource из панелей
-            foreach ($variables as &$variable) {
-                if ($variable['type'] === 'query' && !$variable['datasource'] && isset($varDatasourceMap[$variable['name']])) {
-                    $possibleDs = array_unique($varDatasourceMap[$variable['name']]);
-                    // Выбрать первый (или можно выбрать default если есть)
-                    $variable['datasource'] = $possibleDs[0] ?? $defaultDs;
-                    // Установить datasource_type если не установлен
-                    if (!isset($variable['datasource_type'])) {
-                        // Найти type по uid
-                        foreach ($datasources as $ds) {
-                            if ($ds['uid'] === $variable['datasource']) {
-                                $variable['datasource_type'] = $ds['type'];
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
+        }
+    }
+}
 
             // Пересчитать зависимости после добавления новых переменных
             $deps = $this->getDependencies($variables);
@@ -831,7 +859,7 @@ class GrafanaVariableProcessor implements GrafanaVariableProcessorInterface
                 }
             }
 
-            return $output;
+            return ['output' => $output, 'allCombinations' => $allCombinations];
         } catch (\Exception $e) {
             $this->logger->error('Error in processVariables: ' . $e->getMessage());
             return [];

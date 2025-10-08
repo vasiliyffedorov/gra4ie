@@ -236,8 +236,7 @@ $container->set(\App\Interfaces\GrafanaClientInterface::class, $proxy);
 // Автоматическое обновление кэша дашбордов, если пустой
 if (empty($proxy->getMetricNames())) {
     $logger->info("Кэш дашбордов пустой, автоматически обновляем...");
-    shell_exec('php ' . __DIR__ . '/bin/update_dashboards_cache.php ' . $currentInstance['id']);
-    $proxy->reloadMetricsCache();
+    $proxy->updateMetricsCache();
     $logger->info("Кэш дашбордов обновлён автоматически.");
 }
 
