@@ -30,7 +30,7 @@ class DFTProcessor implements DFTProcessorInterface {
      * @param int $end Конечное время диапазона
      * @param int $step Шаг времени
      * @return array Результат DFT: ['upper' => ['coefficients' => array, 'trend' => ['slope' => float, 'intercept' => float]], 'lower' => [...]]
-     * @throws \InvalidArgumentException Если bounds пусты, некорректны или временной диапазон нулевой
+     * @throws \InvalidArgumentException Если bounds пусты или некорректны
      */
     public function generateDFT(array $bounds, int $start, int $end, int $step): array {
         if (empty($bounds['upper']) || empty($bounds['lower'])) {
@@ -43,7 +43,17 @@ class DFTProcessor implements DFTProcessorInterface {
         $maxHarmonics = $this->config['corrdor_params']['max_harmonics'] ?? 10;
         $totalDuration = $end - $start;
         if ($totalDuration <= 0) {
-            throw new \InvalidArgumentException('Total duration must be positive, got start=' . $start . ', end=' . $end);
+            $this->logger->warning("Zero or negative total duration: start=$start, end=$end, returning empty coefficients");
+            return [
+                'upper' => [
+                    'coefficients' => [],
+                    'trend' => ['slope' => 0, 'intercept' => 0]
+                ],
+                'lower' => [
+                    'coefficients' => [],
+                    'trend' => ['slope' => 0, 'intercept' => 0]
+                ]
+            ];
         }
         $numPoints = count($upperValues);
 
