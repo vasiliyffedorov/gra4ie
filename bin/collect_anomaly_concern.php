@@ -103,8 +103,9 @@ $instance = $instances[0];
 $authHeader = 'Authorization: Basic ' . base64_encode($instance['url'] . ':' . $instance['token']);
 echo "Используем auth для instance: {$instance['url']}\n";
 
-// Собрать все metric_key
+// Собрать все metric_key и metric_data
 $allMetrics = [];
+$metricDataMap = [];
 foreach ($instances as $instance) {
     $instanceId = $instance['id'];
     echo "Загружаем метрики для instance $instanceId\n";
@@ -112,6 +113,7 @@ foreach ($instances as $instance) {
     echo "Метрик в instance $instanceId: " . count($metrics) . "\n";
     foreach ($metrics as $metric) {
         $allMetrics[] = $metric['metric_key'];
+        $metricDataMap[$metric['metric_key']] = $metric['metric_data'];
     }
 }
 
@@ -128,7 +130,25 @@ $anomalyConcerns = [];
 $processed = 0;
 
 foreach ($allMetrics as $metricKey) {
+    $panelUrl = $metricDataMap[$metricKey]['panel_url'] ?? '';
+    if (empty($panelUrl)) {
+        // Попытаться построить URL из original_query
+        $metricData = $metricDataMap[$metricKey] ?? [];
+        $originalQuery = $metricData['original_query'] ?? '';
+        if (!empty($originalQuery)) {
+            $parts = explode(':', $originalQuery, 2);
+            if (count($parts) === 2) {
+                $jsonStr = $parts[1];
+                $labels = json_decode($jsonStr, true);
+                if ($labels && isset($labels['node_name'])) {
+                    $nodeName = $labels['node_name'];
+                    $panelUrl = "https://81.163.20.183/graph/d/vmagent/VictoriaMetrics%20Agents%20Overview?node_name=$nodeName";
+                }
+            }
+        }
+    }
     echo "Обрабатываем метрику: $metricKey\n";
+    echo "URL: " . (!empty($panelUrl) ? $panelUrl : "не найден") . "\n";
 
     // Рассчитать диапазон на основе max duration аномалий из кэша
     $cached = $cacheManager->loadFromCache($metricKey, '{}');
@@ -200,7 +220,11 @@ foreach ($allMetrics as $metricKey) {
                 // Извлечь лейблы, исключая __name__
                 $labels = $result['metric'];
                 unset($labels['__name__']);
-                echo "Добавляем: $name = $value с лейблами " . json_encode($labels) . "\n";
+                echo "Добавляем:\n";
+                echo "  Значение: $value\n";
+                echo "  Лейблы:\n";
+                echo json_encode($labels, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
+                echo "\n";
                 $anomalyConcerns[] = [
                     'metric' => $metricKey,
                     'name' => $name,
@@ -220,6 +244,10 @@ usort($anomalyConcerns, fn($a, $b) => $a['value'] <=> $b['value']);
 
 // Вывести
 foreach ($anomalyConcerns as $item) {
-    echo sprintf("%s: %s = %.2f\n", json_encode($item['labels']), $item['name'], $item['value']);
+    echo "Метрика: {$item['name']}\n";
+    echo "Значение: {$item['value']}\n";
+    echo "Лейблы:\n";
+    echo json_encode($item['labels'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
+    echo "\n";
 }
 ?>

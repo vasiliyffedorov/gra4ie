@@ -217,7 +217,7 @@ class DataFetcher {
             $rawQuery = false;
             $this->logger->debug("Initial expr: $expr, rawQuery: $rawQuery");
             $this->logger->debug("Final expr: $expr, rawQuery: $rawQuery");
-            if (preg_match('/^label_values\(([^,]*),\s*([^)]+)\)$/', $query, $matches)) {
+            if (preg_match('/^label_values\((.+),\s*([^)]+)\)$/', $query, $matches)) {
                 $metric = trim($matches[1]);
                 $label = trim($matches[2]);
                 if (empty($metric)) {
@@ -228,6 +228,10 @@ class DataFetcher {
                 $rawQuery = true;
             } elseif (preg_match('/^query_result\((.+)\)$/', $query, $matches)) {
                 $expr = trim($matches[1]);
+                $rawQuery = true;
+            } elseif (preg_match('/^label_values\(([^)]+)\)$/', $query, $matches)) {
+                $label = trim($matches[1]);
+                $expr = "count by ($label) ({})";
                 $rawQuery = true;
             } elseif (preg_match('/^metrics\(([^)]+)\)$/', $query, $matches)) {
                 $regex = stripslashes(trim($matches[1]));

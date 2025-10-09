@@ -47,7 +47,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
             'Content-Type: application/json',
             'Accept: application/json',
         ];
-        $fetchTimeout = $config['corrdor_params']['fetch_timeout_sec'] ?? 30;
+        $fetchTimeout = $config['corridor_params']['fetch_timeout_sec'] ?? 30;
         $this->httpClient = new HttpClient($this->headers, $this->logger, $fetchTimeout);
 
         $this->loadMetricsCache();
@@ -97,6 +97,10 @@ class GrafanaProxyClient implements GrafanaClientInterface
         }
 
         $info = $this->metricsCache[$metricName];
+
+        // Replace specific variables with corridor_params.step * 2
+        $replacementValue = ($this->config['corridor_params']['step'] ?? 0) * 2;
+        $info['substituted_query'] = str_replace(['$interval', '$__interval', '$__rate_interval'], (string)$replacementValue, $info['substituted_query']);
 
         // Определяем тип datasource из кеша
         $this->lastDataSourceType = strtolower($info['datasource']['type'] ?? 'unknown');
@@ -357,6 +361,13 @@ class GrafanaProxyClient implements GrafanaClientInterface
                             'combination'   => $combination,
                             'substituted_query' => $substituted_query,
                             'datasource'    => $datasource,
+                            'panel_url' => sprintf(
+                                '%s/d/%s/%s?viewPanel=%s',
+                                $this->grafanaUrl,
+                                $uid,
+                                rawurlencode($title),
+                                $panelId
+                            ),
                         ];
                         // Сохранить метрику сразу в БД
                         $this->cacheManager->saveGrafanaIndividualMetric($this->instanceId, $key, $metricData);
