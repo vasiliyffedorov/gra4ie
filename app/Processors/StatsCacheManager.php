@@ -467,7 +467,7 @@ class StatsCacheManager {
                 $historyData,
                 $bounds,
                 $currentConfig['corrdor_params']['lower_percentile'] ?? 5.0,
-                $currentConfig['corrdor_params']['upper_percentile'] ?? 95.0
+                $currentConfig['corrdor_params']['upper_percentile'] ?? 5.0
             );
             $this->logger->info("Filtered outliers: original " . count($historyData) . " points, filtered " . count($filteredHistory) . " points for {$query}, {$labelsJson}");
             $historyData = $filteredHistory;

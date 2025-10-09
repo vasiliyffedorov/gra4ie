@@ -135,6 +135,9 @@ class CorridorBuilder
                 $cached['meta'], $cached['dft_lower']['trend']
             );
 
+            // Применяем грязный хак к коридору
+            $this->applyCorridorHack($upper, $lower);
+
             // Применяем сдвиги для коррекции ширины коридора
             $upperShift = $cached['upper_shift'] ?? 0.0;
             $lowerShift = $cached['lower_shift'] ?? 0.0;
@@ -268,8 +271,11 @@ class CorridorBuilder
                 $item['nodata'] = [['time' => time(), 'value' => 1.0]];
                 $this->logger->info("Added nodata flag for query: $query, labels: $labelsJson");
             }
-    
+
             $results[] = $item;
+
+            // Очистка памяти после обработки каждой метрики
+            unset($orig, $cached, $upper, $lower, $cU, $cL, $aggregatedOrig, $buckets, $currStats, $item, $l1, $requestMd5, $l1Status);
         }
 
         PerformanceMonitor::end('total_processing');
@@ -300,5 +306,103 @@ class CorridorBuilder
             }
         }
         return $aligned;
+    }
+
+    /**
+     * Вычисляет перцентиль массива значений.
+     */
+    private function getPercentile(array $values, float $p): float
+    {
+        $sorted = $values;
+        sort($sorted);
+        $n = count($sorted);
+        if ($n == 0) return 0.0;
+        $pos = $p * ($n - 1);
+        $lower = (int)floor($pos);
+        $upper = (int)ceil($pos);
+        if ($lower == $upper) {
+            return $sorted[$lower];
+        }
+        $weight = $pos - $lower;
+        return $sorted[$lower] * (1 - $weight) + $sorted[$upper] * $weight;
+    }
+
+    /**
+     * Применяет грязный хак к коридору: верхняя граница >= нижней, и обрабатывает нулевой коридор.
+     */
+    private function applyCorridorHack(array &$upper, array &$lower): void
+    {
+        $upperValues = array_column($upper, 'value');
+        $lowerValues = array_column($lower, 'value');
+        $dev_percentile_low = $this->config['corrdor_params']['dev_percentile_low'] ?? 0.495;
+        $dev_percentile_high = $this->config['corrdor_params']['dev_percentile_high'] ?? 0.505;
+        $p_low_upper = $this->getPercentile($upperValues, $dev_percentile_low);
+        $p_high_upper = $this->getPercentile($upperValues, $dev_percentile_high);
+        $dev_upper = max($p_high_upper - $p_low_upper, 0.01);
+        $p_low_lower = $this->getPercentile($lowerValues, $dev_percentile_low);
+        $p_high_lower = $this->getPercentile($lowerValues, $dev_percentile_high);
+        $dev_lower = max($p_high_lower - $p_low_lower, 0.01);
+        $factor_upper = $dev_upper;
+        $factor_lower = $dev_lower;
+
+        $n = count($upper);
+        for ($i = 0; $i < $n; $i++) {
+            $u = &$upper[$i]['value'];
+            $l = &$lower[$i]['value'];
+            if ($u < $l) {
+                $diff = $l - $u;
+                $adjustment_upper = $diff * $factor_upper;
+                $adjustment_lower = $diff * $factor_lower;
+                $u += $adjustment_upper;
+                $l -= $adjustment_lower;
+            } elseif ($u == $l) {
+                // Найти предыдущую точку, где они не равны
+                $found = false;
+                for ($j = $i - 1; $j >= 0; $j--) {
+                    if ($upper[$j]['value'] != $lower[$j]['value']) {
+                        $u = $upper[$j]['value'];
+                        $l = $lower[$j]['value'];
+                        $found = true;
+                        break;
+                    }
+                }
+                if (!$found) {
+                    // Крайний случай: ищем вперед первую не нулевую разницу
+                    for ($j = $i + 1; $j < $n; $j++) {
+                        if ($upper[$j]['value'] != $lower[$j]['value']) {
+                            if ($upper[$j]['value'] > $lower[$j]['value']) {
+                                // Присваиваем всем предыдущим значения из этой точки
+                                for ($k = 0; $k <= $i; $k++) {
+                                    $upper[$k]['value'] = $upper[$j]['value'];
+                                    $lower[$k]['value'] = $lower[$j]['value'];
+                                }
+                            } else {
+                                // upper < lower, применить коррекцию
+                                $diff = $lower[$j]['value'] - $upper[$j]['value'];
+                                $adjustment_upper = $diff * $factor_upper;
+                                $adjustment_lower = $diff * $factor_lower;
+                                for ($k = 0; $k <= $i; $k++) {
+                                    $upper[$k]['value'] = $upper[$j]['value'] + $adjustment_upper;
+                                    $lower[$k]['value'] = $lower[$j]['value'] - $adjustment_lower;
+                                }
+                            }
+                            $found = true;
+                            break;
+                        }
+                    }
+                    if (!$found) {
+                        // Крайний случай: присваиваем средние значения
+                        $avg_u = array_sum($upperValues) / count($upperValues);
+                        $avg_l = array_sum($lowerValues) / count($lowerValues);
+                        $u = $avg_u;
+                        $l = $avg_l;
+                        // Продолжаем до тех пор, пока верхняя не станет больше нижней
+                        if ($u <= $l) {
+                            $u = $l + 0.01;
+                        }
+                    }
+                }
+            }
+        }
     }
 }

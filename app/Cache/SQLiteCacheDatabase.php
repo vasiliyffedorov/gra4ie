@@ -22,6 +22,10 @@ class SQLiteCacheDatabase
 
         $this->db = new \PDO("sqlite:" . $dbPath);
         $this->db->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
+        // Set busy timeout to avoid deadlocks on concurrent access
+        $this->db->exec("PRAGMA busy_timeout = 30000"); // 30 seconds
+        $this->db->exec("PRAGMA journal_mode = WAL"); // Enable WAL mode for better concurrency
+        $this->db->exec("PRAGMA synchronous = NORMAL"); // Balance performance and safety
 
         if ($isNewDb) {
             $this->initializeDatabase();

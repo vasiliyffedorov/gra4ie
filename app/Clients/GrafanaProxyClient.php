@@ -23,6 +23,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
     private array $dashCache = [];
     private int $instanceId;
     private HttpClient $httpClient;
+    private array $config;
 
     /** тип последнего datasource, на который сделали queryRange */
     private string $lastDataSourceType = 'unknown';
@@ -31,12 +32,14 @@ class GrafanaProxyClient implements GrafanaClientInterface
         array $instance,
         LoggerInterface $logger,
         ?CacheManagerInterface $cacheManager = null,
-        ?GrafanaVariableProcessorInterface $variableProcessor = null
+        ?GrafanaVariableProcessorInterface $variableProcessor = null,
+        array $config = []
     ) {
         $this->instanceId = $instance['id'];
         $this->logger     = $logger;
         $this->cacheManager = $cacheManager;
         $this->variableProcessor = $variableProcessor;
+        $this->config = $config;
 
         $this->loadInstanceData();
         $this->headers    = [
@@ -44,7 +47,8 @@ class GrafanaProxyClient implements GrafanaClientInterface
             'Content-Type: application/json',
             'Accept: application/json',
         ];
-        $this->httpClient = new HttpClient($this->headers, $this->logger);
+        $fetchTimeout = $config['corrdor_params']['fetch_timeout_sec'] ?? 30;
+        $this->httpClient = new HttpClient($this->headers, $this->logger, $fetchTimeout);
 
         $this->loadMetricsCache();
     }
@@ -257,7 +261,7 @@ class GrafanaProxyClient implements GrafanaClientInterface
         $this->cacheManager->updateGrafanaIndividualMetrics($this->instanceId, []);
 
         $maxOptions = 50; // Можно взять из config
-        $maxCombinations = 1000;
+        $maxCombinations = $this->config['grafana']['max_combinations'] ?? 1000;
 
         // Получить default datasource
         $api = new \App\Processors\GrafanaAPI(new \App\Processors\Config($this->grafanaUrl, $this->apiToken, ''));
@@ -326,8 +330,8 @@ class GrafanaProxyClient implements GrafanaClientInterface
                     $this->logger->info("Пропущена панель {$panelId} в дашборде $uid: title не установлен");
                     continue;
                 }
-                // Пропустить панели, не являющиеся timeseries
-                if (($panelData['type'] ?? '') !== 'timeseries') {
+                // Пропустить панели, не являющиеся timeseries или graph
+                if (!in_array($panelData['type'] ?? '', ['timeseries', 'graph'])) {
                     $this->logger->info("Пропущена панель {$panelId} в дашборде $uid: тип панели '{$panelData['type']}' не поддерживается");
                     continue;
                 }

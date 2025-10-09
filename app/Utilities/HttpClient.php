@@ -9,28 +9,31 @@ class HttpClient
 {
     private array $headers;
     private ?LoggerInterface $logger;
+    private int $timeout;
 
-    public function __construct(array $headers, ?LoggerInterface $logger = null)
+    public function __construct(array $headers, ?LoggerInterface $logger = null, int $timeout = 30)
     {
         $this->headers = $headers;
         $this->logger = $logger;
+        $this->timeout = $timeout;
     }
 
-    public function request(string $method, string $url, ?string $body = null): ?string
+    public function request(string $method, string $url, ?string $body = null, ?int $timeout = null): ?string
     {
         $maxRetries = 2;
         $retryCount = 0;
+        $timeout = $timeout ?? 30; // default 30 seconds
 
         while ($retryCount <= $maxRetries) {
             if ($this->logger) {
-                $this->logger->info("HTTP Request → $method $url (attempt " . ($retryCount + 1) . ")\nBody: " . ($body ?? 'none'));
+                $this->logger->info("HTTP Request → $method $url (attempt " . ($retryCount + 1) . ", timeout {$timeout}s)\nBody: " . ($body ?? 'none'));
             }
             $ch = curl_init($url);
             curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_HTTPHEADER, $this->headers);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+            curl_setopt($ch, CURLOPT_TIMEOUT, $this->timeout);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
             curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
             curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
             if ($body !== null) {

@@ -30,12 +30,22 @@ class DFTProcessor implements DFTProcessorInterface {
      * @param int $end Конечное время диапазона
      * @param int $step Шаг времени
      * @return array Результат DFT: ['upper' => ['coefficients' => array, 'trend' => ['slope' => float, 'intercept' => float]], 'lower' => [...]]
-     * @throws \InvalidArgumentException Если bounds пусты или некорректны
+     * @throws \InvalidArgumentException Если bounds некорректны (возвращает пустые коэффициенты для пустых bounds)
      */
-    public function generateDFT(array $bounds, int $start, int $end, int $step): array {
-        if (empty($bounds['upper']) || empty($bounds['lower'])) {
-            throw new \InvalidArgumentException('Bounds must contain non-empty upper and lower arrays');
-        }
+     public function generateDFT(array $bounds, int $start, int $end, int $step): array {
+         if (empty($bounds['upper']) || empty($bounds['lower'])) {
+             $this->logger->warning('Bounds are empty, returning empty DFT coefficients');
+             return [
+                 'upper' => [
+                     'coefficients' => [],
+                     'trend' => ['slope' => 0, 'intercept' => 0]
+                 ],
+                 'lower' => [
+                     'coefficients' => [],
+                     'trend' => ['slope' => 0, 'intercept' => 0]
+                 ]
+             ];
+         }
         $upperValues = array_column($bounds['upper'], 'value');
         $lowerValues = array_column($bounds['lower'], 'value');
         $times = array_column($bounds['upper'], 'time');

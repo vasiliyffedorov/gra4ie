@@ -20,6 +20,27 @@ require './vendor/autoload.php';
 
 use App\DI\Container;
 
+// Парсинг параметров командной строки
+$options = getopt('', ['step:', 'min-range:', 'max-range:']);
+$step = isset($options['step']) ? parseTime($options['step']) : 300; // 5m default
+$minRange = isset($options['min-range']) ? parseTime($options['min-range']) : 3600; // 1h default
+$maxRange = isset($options['max-range']) ? parseTime($options['max-range']) : 604800; // 7d default
+
+function parseTime(string $timeStr): int {
+    $units = [
+        's' => 1,
+        'm' => 60,
+        'h' => 3600,
+        'd' => 86400,
+    ];
+    if (is_numeric($timeStr)) {
+        return (int)$timeStr;
+    }
+    $unit = substr($timeStr, -1);
+    $value = (int)substr($timeStr, 0, -1);
+    return $value * ($units[$unit] ?? 1);
+}
+
 // Читаем конфиг аналогично index.php
 $flatIni = parse_ini_file('./config/config.cfg', true, INI_SCANNER_RAW);
 if ($flatIni === false) {
@@ -108,11 +129,28 @@ $processed = 0;
 
 foreach ($allMetrics as $metricKey) {
     echo "Обрабатываем метрику: $metricKey\n";
+
+    // Рассчитать диапазон на основе max duration аномалий из кэша
+    $cached = $cacheManager->loadFromCache($metricKey, '{}');
+    $maxDuration = 0;
+    if ($cached && isset($cached['meta']['anomaly_stats'])) {
+        $durations = array_merge(
+            $cached['meta']['anomaly_stats']['above']['durations'] ?? [],
+            $cached['meta']['anomaly_stats']['below']['durations'] ?? []
+        );
+        if (!empty($durations)) {
+            // Если durations - перцентили, взять последний (100-й)
+            $maxDuration = is_array($durations) ? max($durations) : $durations[count($durations) - 1] ?? 0;
+        }
+    }
+    $calculatedRange = $maxDuration > 0 ? $maxDuration * 2 : $minRange;
+    $range = max($minRange, min($maxRange, $calculatedRange));
+    echo "Max duration: {$maxDuration}s, calculated range: {$calculatedRange}s, final range: {$range}s\n";
+
     // Сделать запрос на приложение
     $query = $metricKey . '#dashboard.show_metrics=anomaly_concern';
-    $start = time() - 3600; // последний час
+    $start = time() - $range;
     $end = time();
-    $step = 60;
 
     $postData = http_build_query([
         'query' => $query,
@@ -159,11 +197,15 @@ foreach ($allMetrics as $metricKey) {
                 // Взять последнее значение
                 $lastValue = end($values);
                 $value = (float)$lastValue[1];
-                echo "Добавляем: $name = $value\n";
+                // Извлечь лейблы, исключая __name__
+                $labels = $result['metric'];
+                unset($labels['__name__']);
+                echo "Добавляем: $name = $value с лейблами " . json_encode($labels) . "\n";
                 $anomalyConcerns[] = [
                     'metric' => $metricKey,
                     'name' => $name,
-                    'value' => $value
+                    'value' => $value,
+                    'labels' => $labels
                 ];
             }
         }
@@ -178,6 +220,6 @@ usort($anomalyConcerns, fn($a, $b) => $a['value'] <=> $b['value']);
 
 // Вывести
 foreach ($anomalyConcerns as $item) {
-    echo sprintf("%s: %s = %.2f\n", $item['metric'], $item['name'], $item['value']);
+    echo sprintf("%s: %s = %.2f\n", json_encode($item['labels']), $item['name'], $item['value']);
 }
 ?>

@@ -217,9 +217,13 @@ class DataFetcher {
             $rawQuery = false;
             $this->logger->debug("Initial expr: $expr, rawQuery: $rawQuery");
             $this->logger->debug("Final expr: $expr, rawQuery: $rawQuery");
-            if (preg_match('/^label_values\((.+),\s*([^)]+)\)$/', $query, $matches)) {
+            if (preg_match('/^label_values\(([^,]*),\s*([^)]+)\)$/', $query, $matches)) {
                 $metric = trim($matches[1]);
                 $label = trim($matches[2]);
+                if (empty($metric)) {
+                    $this->logger->warning("Empty metric in label_values for variable, returning empty options");
+                    return [];
+                }
                 $expr = "count by ($label) ($metric)";
                 $rawQuery = true;
             } elseif (preg_match('/^query_result\((.+)\)$/', $query, $matches)) {
@@ -361,7 +365,7 @@ class DataFetcher {
         if (isset($variable['regex']) && $variable['regex']) {
             $filtered = [];
             foreach ($values as $opt) {
-                $val = $opt['value'];
+                $val = (string)$opt['value'];
                 if (@preg_match($variable['regex'], $val, $matches)) {
                     $newVal = isset($matches[1]) ? $matches[1] : $matches[0];
                     $filtered[] = ['value' => $newVal, 'text' => $newVal];

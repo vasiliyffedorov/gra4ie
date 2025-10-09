@@ -130,4 +130,28 @@ class DFTProcessorTest extends TestCase
         // Проверяем, что коэффициенты включают гармоники (NU DFT фильтрует по вкладу)
         $this->assertArrayHasKey(0, $result['upper']['coefficients']); // Постоянная компонента
     }
+
+    public function testGenerateDFTWithEmptyBounds(): void
+    {
+        // Тест обработки пустых bounds
+        $bounds = [
+            'upper' => [],
+            'lower' => []
+        ];
+        $start = 1000000000;
+        $end = 1000014400;
+        $step = 3600;
+
+        $result = $this->processor->generateDFT($bounds, $start, $end, $step);
+
+        // Проверяем, что возвращены пустые коэффициенты
+        $this->assertArrayHasKey('upper', $result);
+        $this->assertArrayHasKey('lower', $result);
+        $this->assertEmpty($result['upper']['coefficients']);
+        $this->assertEmpty($result['lower']['coefficients']);
+        $this->assertEquals(0.0, $result['upper']['trend']['slope']);
+        $this->assertEquals(0.0, $result['upper']['trend']['intercept']);
+        $this->assertEquals(0.0, $result['lower']['trend']['slope']);
+        $this->assertEquals(0.0, $result['lower']['trend']['intercept']);
+    }
 }

@@ -228,7 +228,7 @@ if ($currentInstance === null) {
 }
 
 // Создание GrafanaProxyClient с instance
-$proxy = new \App\Clients\GrafanaProxyClient($currentInstance, $logger, $cacheManager, $variableProcessor);
+$proxy = new \App\Clients\GrafanaProxyClient($currentInstance, $logger, $cacheManager, $variableProcessor, $config);
 
 // Регистрация proxy в container для CorridorBuilder
 $container->set(\App\Interfaces\GrafanaClientInterface::class, $proxy);
@@ -243,9 +243,11 @@ if (empty($proxy->getMetricNames())) {
 // 3) роутинг
 $method = $_SERVER['REQUEST_METHOD'];
 $path   = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$logger->info("Routing request: $method $path");
 
 // GET /api/v1/labels
 if ($method==='GET' && $path==='/api/v1/labels') {
+    $logger->info("Handling GET /api/v1/labels");
     jsonSuccess($proxy->getMetricNames());
     exit;
 }
@@ -303,11 +305,15 @@ if ($method==='POST' && $path==='/api/v1/query') {
 
 // POST /api/v1/query_range
 if ($method==='POST' && $path==='/api/v1/query_range') {
+    $logger->info("Handling POST /api/v1/query_range");
+    set_time_limit(300); // 5 minutes timeout for query_range
     $params = [];
     parse_str(file_get_contents('php://input'), $params);
     if (empty($params['query'])) {
+        $logger->error("Missing query parameter in /api/v1/query_range");
         jsonError('Missing query', 400);
     }
+    $logger->info("Query: " . substr($params['query'], 0, 200));
 
     // разбираем override-параметры
     $normalizedQuery = normalizeQuery($params['query']);
@@ -335,16 +341,22 @@ if ($method==='POST' && $path==='/api/v1/query_range') {
     $step  = (int)($params['step']  ?? 60);
 
     // и строим коридор
+    $logger->info("Creating CorridorBuilder and building corridor");
     $corridorBuilder = new \App\Processors\CorridorBuilder($container);
     $corridorBuilder->updateConfig($finalConfig);
-    $result = $corridorBuilder->build(
-        $params['query'],
-        $start,
-        $end,
-        $step
-    );
-
-    $logger->info("Query range result built for query: " . $params['query']);
+    $logger->info("Starting corridor build for query: " . substr($params['query'], 0, 100));
+    try {
+        $result = $corridorBuilder->build(
+            $params['query'],
+            $start,
+            $end,
+            $step
+        );
+        $logger->info("Query range result built successfully for query: " . substr($params['query'], 0, 100));
+    } catch (Exception $e) {
+        $logger->error("Error building corridor: " . $e->getMessage());
+        jsonError('Internal server error during corridor build', 500);
+    }
     echo json_encode($result);
     exit;
 }

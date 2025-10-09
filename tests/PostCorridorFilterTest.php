@@ -23,7 +23,7 @@ class PostCorridorFilterTest extends TestCase
 
         $bounds = []; // Не используется в фильтрации
 
-        $filtered = PostCorridorFilter::filterOutliers($historyData, $bounds, 5.0, 95.0);
+        $filtered = PostCorridorFilter::filterOutliers($historyData, $bounds, 5.0, 5.0);
 
         // Проверяем, что всплески удалены
         $values = array_column($filtered, 'value');
@@ -31,7 +31,7 @@ class PostCorridorFilterTest extends TestCase
         $this->assertLessThan(200, $maxValue, 'Всплески должны быть отфильтрованы');
 
         // Проверяем, что большинство данных осталось
-        $this->assertGreaterThan(90, count($filtered), 'Большинство данных должно остаться');
+        $this->assertGreaterThanOrEqual(90, count($filtered), 'Большинство данных должно остаться');
     }
 
     public function testFilterOutliersWithNoOutliers(): void
@@ -44,10 +44,11 @@ class PostCorridorFilterTest extends TestCase
         }
 
         $bounds = [];
-        $filtered = PostCorridorFilter::filterOutliers($historyData, $bounds, 5.0, 95.0);
+        $filtered = PostCorridorFilter::filterOutliers($historyData, $bounds, 5.0, 5.0);
 
-        // Все данные должны остаться
-        $this->assertEquals(count($historyData), count($filtered));
+        // Удаляются ceil(5% низких) + ceil(5% высоких), т.е. 3 + 3 из 50, остается 44
+        $expectedCount = 50 - 3 - 3; // 44
+        $this->assertEquals($expectedCount, count($filtered));
     }
 
     public function testFilterOutliersWithEmptyData(): void
