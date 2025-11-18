@@ -16,7 +16,7 @@ class AnomalyDetectorTest extends TestCase
     {
         $this->logger = new Logger(__DIR__ . '/../logs/test.log', Logger::LEVEL_DEBUG);
         $this->config = [
-            'corrdor_params' => [
+            'corridor_params' => [
                 'step' => 60,
                 'default_percentiles' => [
                     'duration' => 75,

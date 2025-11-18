@@ -215,14 +215,14 @@ class CorridorBuilder
             $currStats = $this->anomalyDetector->calculateAnomalyStats(
                 $this->alignByTime($aggregatedOrig, $cU, $cL),
                 $cU, $cL,
-                $this->config['corrdor_params']['default_percentiles'],
+                $this->config['corridor_params']['default_percentiles'],
                 true, // raw
                 false, // not historical
                 $histStep  // actual step for live, use histStep to match historical percentiles
             );
-   
+
             // concern-метрики
-            $wsize = $this->config['corrdor_params']['window_size'];
+            $wsize = $this->config['corridor_params']['window_size'];
             $aboveConcerns = $this->anomalyDetector->calculateIntegralMetric(
                 $currStats['above'], $cached['meta']['anomaly_stats']['above'] ?? []
             );
@@ -334,8 +334,8 @@ class CorridorBuilder
     {
         $upperValues = array_column($upper, 'value');
         $lowerValues = array_column($lower, 'value');
-        $dev_percentile_low = $this->config['corrdor_params']['dev_percentile_low'] ?? 0.495;
-        $dev_percentile_high = $this->config['corrdor_params']['dev_percentile_high'] ?? 0.505;
+        $dev_percentile_low = $this->config['corridor_params']['dev_percentile_low'] ?? 0.495;
+        $dev_percentile_high = $this->config['corridor_params']['dev_percentile_high'] ?? 0.505;
         $p_low_upper = $this->getPercentile($upperValues, $dev_percentile_low);
         $p_high_upper = $this->getPercentile($upperValues, $dev_percentile_high);
         $dev_upper = max($p_high_upper - $p_low_upper, 0.01);

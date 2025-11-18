@@ -108,7 +108,7 @@ class ResponseFormatter {
 
         foreach ($results as $result) {
             $labels = $result['labels'] ?? [];
-            $percentileConfig = $this->config['corrdor_params']['default_percentiles'] ?? ['duration' => 75, 'size' => 75];
+            $percentileConfig = $this->config['corridor_params']['default_percentiles'] ?? ['duration' => 75, 'size' => 75];
 
             if (in_array('original', $metricsToShow) && isset($result['original'])) {
                 $this->addMetric($formatted, $labels, $query, 'original', $result['original'] ?? []);

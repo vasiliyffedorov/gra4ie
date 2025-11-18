@@ -12,8 +12,8 @@ class AnomalyDetector implements AnomalyDetectorInterface {
     private LoggerInterface $logger;
 
     public function __construct(array $config, LoggerInterface $logger) {
-        if (!isset($config['corrdor_params']['step']) || !isset($config['cache']['percentiles'])) {
-            throw new \InvalidArgumentException('Config must contain corrdor_params.step and cache.percentiles');
+        if (!isset($config['corridor_params']['step']) || !isset($config['cache']['percentiles'])) {
+            throw new \InvalidArgumentException('Config must contain corridor_params.step and cache.percentiles');
         }
         $this->config = $config;
         $this->logger = $logger;
@@ -22,7 +22,7 @@ class AnomalyDetector implements AnomalyDetectorInterface {
     /**
      * Обновляет конфигурацию детектора аномалий.
      *
-     * @param array $config Новый конфиг: ['corrdor_params' => [...], 'cache' => [...]]
+     * @param array $config Новый конфиг: ['corridor_params' => [...], 'cache' => [...]]
      */
     public function updateConfig(array $config): void {
         $this->config = $config;
@@ -338,10 +338,10 @@ class AnomalyDetector implements AnomalyDetectorInterface {
         if (empty($currentStats) || empty($historicalStats)) {
             throw new \InvalidArgumentException('Current and historical stats must not be empty');
         }
-        $durationMult = $this->config['corrdor_params']['default_percentiles']['duration_multiplier'] ?? 1;
-        $sizeMult = $this->config['corrdor_params']['default_percentiles']['size_multiplier'] ?? 1;
-        $durationP = $this->config['corrdor_params']['default_percentiles']['duration'] ?? 75;
-        $sizeP = $this->config['corrdor_params']['default_percentiles']['size'] ?? 75;
+        $durationMult = $this->config['corridor_params']['default_percentiles']['duration_multiplier'] ?? 1;
+        $sizeMult = $this->config['corridor_params']['default_percentiles']['size_multiplier'] ?? 1;
+        $durationP = $this->config['corridor_params']['default_percentiles']['duration'] ?? 75;
+        $sizeP = $this->config['corridor_params']['default_percentiles']['size'] ?? 75;
 
         // Получить массив перцентилей из конфига
         $percentilesStr = $this->config['cache']['percentiles'] ?? "0,10,20,30,40,50,60,70,80,90,95,100";

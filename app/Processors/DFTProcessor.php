@@ -14,8 +14,8 @@ class DFTProcessor implements DFTProcessorInterface {
     private NUDiscreteFourierTransformer $fourierTransformer;
 
     public function __construct(array $config, Logger $logger) {
-        if (!isset($config['corrdor_params']['step']) || !isset($config['corrdor_params']['max_harmonics']) || !isset($config['corrdor_params']['use_common_trend'])) {
-            throw new \InvalidArgumentException('Config must contain corrdor_params with step, max_harmonics, and use_common_trend');
+        if (!isset($config['corridor_params']['step']) || !isset($config['corridor_params']['max_harmonics']) || !isset($config['corridor_params']['use_common_trend'])) {
+            throw new \InvalidArgumentException('Config must contain corridor_params with step, max_harmonics, and use_common_trend');
         }
         $this->config = $config;
         $this->logger = $logger;
@@ -50,7 +50,7 @@ class DFTProcessor implements DFTProcessorInterface {
         $lowerValues = array_column($bounds['lower'], 'value');
         $times = array_column($bounds['upper'], 'time');
 
-        $maxHarmonics = $this->config['corrdor_params']['max_harmonics'] ?? 10;
+        $maxHarmonics = $this->config['corridor_params']['max_harmonics'] ?? 10;
         $totalDuration = $end - $start;
         if ($totalDuration <= 0) {
             $this->logger->warning("Zero or negative total duration: start=$start, end=$end, returning empty coefficients");
@@ -72,7 +72,7 @@ class DFTProcessor implements DFTProcessorInterface {
         $lowerTrend = $this->calculateLinearTrend($lowerValues, $times);
 
         // Используем средний тренд, если включен флаг use_common_trend
-        $useCommonTrend = $this->config['corrdor_params']['use_common_trend'] ?? false;
+        $useCommonTrend = $this->config['corridor_params']['use_common_trend'] ?? false;
         if ($useCommonTrend) {
             $commonSlope = ($upperTrend['slope'] + $lowerTrend['slope']) / 2;
             // Корректируем intercept для сохранения индивидуальных значений границ

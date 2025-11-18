@@ -142,7 +142,7 @@ class SQLiteCacheConfig
         });
         ksort($standardizedConfig);
         $filteredConfig = array_filter($standardizedConfig, function ($key) {
-            return !str_starts_with($key, 'save') && $key !== 'corrdor_params' && $key !== 'historical_period_days';
+            return !str_starts_with($key, 'save') && $key !== 'corridor_params' && $key !== 'historical_period_days';
         }, ARRAY_FILTER_USE_KEY);
         return md5(json_encode($filteredConfig));
     }

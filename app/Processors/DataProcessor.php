@@ -65,15 +65,15 @@ class DataProcessor implements DataProcessorInterface {
         $times = array_column($data, 'time');
 
         // Проверяем конфигурацию
-        if (!is_array($this->config['corrdor_params']) ||
-            !isset($this->config['corrdor_params']['window_size']) ||
-            !isset($this->config['corrdor_params']['margin_percent'])) {
+        if (!is_array($this->config['corridor_params']) ||
+            !isset($this->config['corridor_params']['window_size']) ||
+            !isset($this->config['corridor_params']['margin_percent'])) {
             $this->logger->error("Неверная конфигурация метода adaptive");
             throw new Exception("Неверная конфигурация метода adaptive");
         }
 
-        $windowSize = $this->config['corrdor_params']['window_size'];
-        $marginPercent = $this->config['corrdor_params']['margin_percent'] ?? 10;
+        $windowSize = $this->config['corridor_params']['window_size'];
+        $marginPercent = $this->config['corridor_params']['margin_percent'] ?? 10;
 
         // Рассчитываем скользящее среднее и границы
         $upper = [];

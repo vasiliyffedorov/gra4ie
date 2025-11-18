@@ -74,7 +74,7 @@ class StatsCalculator
         $range = $this->dataProcessor->getActualDataRange($historyData);
         $longStart = $range['start'];
         $longEnd = $range['end'];
-        $longStep = $this->config['corrdor_params']['step'];
+        $longStep = $this->config['corridor_params']['step'];
 
 
         // 1) генерируем DFT
@@ -116,7 +116,7 @@ class StatsCalculator
         // 3) статистики аномалий
         $stats = $this->anomalyDetector->calculateAnomalyStats(
             $historyData, $upperSeries, $lowerSeries,
-            $this->config['corrdor_params']['default_percentiles']
+            $this->config['corridor_params']['default_percentiles']
         );
         $meta['anomaly_stats'] = $stats;
 

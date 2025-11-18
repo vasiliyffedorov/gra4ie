@@ -38,8 +38,8 @@ class StatsCacheManager {
         GrafanaClientInterface $client,
         \App\Processors\HistoricalPeriodOptimizer $optimizer
     ) {
-        if (!isset($config['corrdor_params']['step']) || !isset($config['cache'])) {
-            throw new \InvalidArgumentException('Config must contain corrdor_params.step and cache');
+        if (!isset($config['corridor_params']['step']) || !isset($config['cache'])) {
+            throw new \InvalidArgumentException('Config must contain corridor_params.step and cache');
         }
         $this->config = $config;
         $this->logger = $logger;
@@ -73,8 +73,8 @@ class StatsCacheManager {
         if (empty($query) || empty($labelsJson)) {
             throw new \InvalidArgumentException('Query and labelsJson must not be empty');
         }
-        if (!isset($currentConfig['corrdor_params']['step'])) {
-            throw new \InvalidArgumentException('Config must contain corrdor_params.step');
+        if (!isset($currentConfig['corridor_params']['step'])) {
+            throw new \InvalidArgumentException('Config must contain corridor_params.step');
         }
 
         // Если метрика помечена как unused — ничего не делаем
@@ -121,7 +121,7 @@ class StatsCacheManager {
             $maxPeriodDays = $optimalPeriodDays;
             $this->logger->info("Using optimal period from permanent cache for $metricKey: $maxPeriodDays days");
         } else {
-            $maxPeriodDays = $this->optimizer->determineMaxPeriod($query, $labelsJson, $currentConfig['corrdor_params']['step']);
+            $maxPeriodDays = $this->optimizer->determineMaxPeriod($query, $labelsJson, $currentConfig['corridor_params']['step']);
             $this->logger->info("Permanent cache empty for $metricKey, using optimized period from HistoricalPeriodOptimizer: $maxPeriodDays days");
         }
 
@@ -142,7 +142,7 @@ class StatsCacheManager {
             $histEnd = time();
             $histStart = $histEnd - $periodSec;
             $this->logger->info("Fetching additional data for $metricKey: period {$maxPeriodDays} days, from {$histStart} to {$histEnd}");
-            $longRaw = $this->client->queryRange($query, $histStart, $histEnd, $currentConfig['corrdor_params']['step']);
+            $longRaw = $this->client->queryRange($query, $histStart, $histEnd, $currentConfig['corridor_params']['step']);
             $longGrouped = $this->dataProcessor->groupData($longRaw);
             $fetchedData = $longGrouped[$labelsJson] ?? [];
             $this->logger->info("Fetched adaptive history for $metricKey: $maxPeriodDays days, " . count($fetchedData) . " points");
@@ -263,7 +263,7 @@ class StatsCacheManager {
         $range = $this->dataProcessor->getActualDataRange($historyData);
         $longStart = $range['start'];
         $longEnd = $range['end'];
-        $longStep = $currentConfig['corrdor_params']['step'];
+        $longStep = $currentConfig['corridor_params']['step'];
 
 
         // Проверить необходимость пересоздания кеша DFT
@@ -291,7 +291,7 @@ class StatsCacheManager {
             // Рассчитать статистики аномалий на текущих данных
             $stats = $this->anomalyDetector->calculateAnomalyStats(
                 $historyData, $upperSeries, $lowerSeries,
-                $currentConfig['corrdor_params']['default_percentiles'],
+                $currentConfig['corridor_params']['default_percentiles'],
                 false, // raw
                 true, // isHistorical
                 $longStep // actual step for hist
@@ -462,12 +462,12 @@ class StatsCacheManager {
         $bounds = $this->dataProcessor->calculateBounds($historyData, $longStart, $longEnd, $longStep);
 
         // Фильтрация выбросов после расчета границ
-        if ($currentConfig['corrdor_params']['enable_outlier_filter'] ?? false) {
+        if ($currentConfig['corridor_params']['enable_outlier_filter'] ?? false) {
             $filteredHistory = PostCorridorFilter::filterOutliers(
                 $historyData,
                 $bounds,
-                $currentConfig['corrdor_params']['lower_percentile'] ?? 5.0,
-                $currentConfig['corrdor_params']['upper_percentile'] ?? 5.0
+                $currentConfig['corridor_params']['lower_percentile'] ?? 5.0,
+                $currentConfig['corridor_params']['upper_percentile'] ?? 5.0
             );
             $this->logger->info("Filtered outliers: original " . count($historyData) . " points, filtered " . count($filteredHistory) . " points for {$query}, {$labelsJson}");
             $historyData = $filteredHistory;
@@ -497,7 +497,7 @@ class StatsCacheManager {
         }
 
         // Фильтруем «нулевые» гармоники
-        $minAmp = (float)($currentConfig['corrdor_params']['min_amplitude'] ?? 1e-12);
+        $minAmp = (float)($currentConfig['corridor_params']['min_amplitude'] ?? 1e-12);
         $dftResult['upper']['coefficients'] = array_filter(
             $dftResult['upper']['coefficients'],
             fn($c) => $c['amplitude'] >= $minAmp
@@ -534,7 +534,7 @@ class StatsCacheManager {
         // Статистики аномалий
         $stats = $this->anomalyDetector->calculateAnomalyStats(
             $historyData, $upperSeries, $lowerSeries,
-            $currentConfig['corrdor_params']['default_percentiles'],
+            $currentConfig['corridor_params']['default_percentiles'],
             false, // raw
             true, // isHistorical
             $longStep // actual step for hist
@@ -599,7 +599,7 @@ class StatsCacheManager {
         array $meta,
         array $currentConfig
     ): array {
-        $minCorridorWidthFactor = $currentConfig['corrdor_params']['min_corridor_width_factor'] ?? 0.05; // default 5% of stddev or something
+        $minCorridorWidthFactor = $currentConfig['corridor_params']['min_corridor_width_factor'] ?? 0.05; // default 5% of stddev or something
 
         // Восстанавливаем коридор на исторический период
         $upperSeries = $this->dftProcessor->restoreFullDFT(

@@ -16,7 +16,7 @@ class DFTProcessorTest extends TestCase
     protected function setUp(): void
     {
         $this->config = [
-            'corrdor_params' => [
+            'corridor_params' => [
                 'step' => 60,
                 'max_harmonics' => 10,
                 'use_common_trend' => false,

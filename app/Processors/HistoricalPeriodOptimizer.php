@@ -31,7 +31,7 @@ class HistoricalPeriodOptimizer
         $this->client = $client;
         $this->dataProcessor = $dataProcessor;
 
-        if (!isset($config['corrdor_params']['step']) || !isset($config['corrdor_params']['fetch_timeout_sec'])) {
+        if (!isset($config['corridor_params']['step']) || !isset($config['corridor_params']['fetch_timeout_sec'])) {
             throw new \InvalidArgumentException('Config must contain step, fetch_timeout_sec');
         }
     }
