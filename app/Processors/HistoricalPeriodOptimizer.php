@@ -45,8 +45,9 @@ class HistoricalPeriodOptimizer
             return $maxPeriodDays;
         }
 
-        // Fixed test periods in seconds: 1m,5m,10m,30m,1h,6h,1d,2d,7d,30d,60d
-        $testPeriodsSec = [60, 300, 600, 1800, 3600, 21600, 86400, 172800, 604800, 2592000, 5184000];
+        // Parse test periods from config
+        $testPeriods = $this->config['corridor_params']['test_periods'] ?? '1m,5m,10m,30m,1h,6h,1d,2d,7d,30d';
+        $testPeriodsSec = $this->parseTestPeriods($testPeriods);
 
         $now = time();
         $prevPeriodSec = 0;
@@ -93,5 +94,43 @@ class HistoricalPeriodOptimizer
     {
         $this->config = $config;
         $this->dataProcessor->updateConfig($config);
+    }
+
+    /**
+     * Parse test periods into seconds array.
+     * Accepts string: "1m,5m,10m,30m,1h,6h,1d,2d,7d,30d"
+     * Or array: ["1m", "5m", ...]
+     */
+    private function parseTestPeriods(string|array $periods): array
+    {
+        if (is_string($periods)) {
+            $periods = array_map('trim', explode(',', $periods));
+        }
+
+        $seconds = [];
+        foreach ($periods as $period) {
+            $seconds[] = $this->periodToSeconds($period);
+        }
+
+        // Sort ascending
+        sort($seconds);
+        return $seconds;
+    }
+
+    /**
+     * Convert period string to seconds.
+     * Supports: m (minutes), h (hours), d (days)
+     */
+    private function periodToSeconds(string $period): int
+    {
+        $unit = substr($period, -1);
+        $value = (int)substr($period, 0, -1);
+
+        return match ($unit) {
+            'm' => $value * 60,
+            'h' => $value * 3600,
+            'd' => $value * 86400,
+            default => throw new \InvalidArgumentException("Unknown period unit: $unit"),
+        };
     }
 }

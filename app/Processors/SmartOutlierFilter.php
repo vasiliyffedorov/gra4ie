@@ -68,8 +68,9 @@ class SmartOutlierFilter
     }
 
     /**
-     * Второй проход: перцентильная фильтрация.
-     * Удаляет значения ниже 3-го и выше 97-го перцентиля, но не более maxRemovalPercent%.
+     * Второй проход: перцентильная фильтрация с возрастным приоритетом.
+     * Удаляет значения ниже lower_percentile и выше (100 - upper_percentile) перцентиля, но не более maxRemovalPercent%.
+     * При превышении лимита приоритет старым точкам.
      */
     private function percentileFilter(array $data): array
     {
@@ -81,31 +82,53 @@ class SmartOutlierFilter
         sort($values);
         $n = count($values);
 
-        // Рассчитать 3-й и 97-й перцентили
-        $p3Index = (int)ceil(0.03 * ($n - 1));
-        $p97Index = (int)floor(0.97 * ($n - 1));
-        $p3 = $values[$p3Index];
-        $p97 = $values[$p97Index];
+        // Рассчитать перцентили из config
+        $lowerPercentile = $this->config['corridor_params']['lower_percentile'] ?? 3;
+        $upperPercentile = $this->config['corridor_params']['upper_percentile'] ?? 3;
+
+        $pLowerIndex = (int)ceil(($lowerPercentile / 100) * ($n - 1));
+        $pUpperIndex = (int)floor(((100 - $upperPercentile) / 100) * ($n - 1));
+
+        $p3 = $values[$pLowerIndex];
+        $p97 = $values[$pUpperIndex];
 
         // Максимальный процент для удаления
         $maxRemovalPercent = $this->config['corridor_params']['max_outlier_removal_percent'] ?? 10;
         $maxToRemove = (int)ceil($n * $maxRemovalPercent / 100);
 
-        // Найти точки для удаления
-        $toRemove = [];
+        // Найти выбросы с их характеристиками
+        $outliers = [];
+        $minTime = min(array_column($data, 'time'));
+        $maxTime = max(array_column($data, 'time'));
+        $timeRange = $maxTime - $minTime ?: 1;
+
         foreach ($data as $point) {
             if ($point['value'] < $p3 || $point['value'] > $p97) {
-                $toRemove[] = $point['time'];
+                // Экстремальность: расстояние от медианы
+                $median = $values[(int)($n / 2)];
+                $extremity = abs($point['value'] - $median);
+
+                // Возрастной фактор: чем старше, тем выше приоритет на удаление
+                $ageFactor = $this->config['corridor_params']['age_weight_factor'] ?? 0.2;
+                $normalizedAge = ($maxTime - $point['time']) / $timeRange; // 0=новый, 1=старый
+                $ageBonus = $normalizedAge * $ageFactor;
+
+                // Итоговый скор: экстремальность + возрастной бонус
+                $score = $extremity * (1 + $ageBonus);
+
+                $outliers[] = [
+                    'time' => $point['time'],
+                    'score' => $score
+                ];
             }
         }
 
-        // Ограничить количество удалений
-        if (count($toRemove) > $maxToRemove) {
-            // Удалить только самые экстремальные (первые и последние в отсортированном списке)
-            $sortedToRemove = $toRemove;
-            sort($sortedToRemove);
-            $toRemove = array_slice($sortedToRemove, 0, $maxToRemove);
-        }
+        // Сортировать по убыванию скора (самые "плохие" сначала)
+        usort($outliers, fn($a, $b) => $b['score'] <=> $a['score']);
+
+        // Взять топ для удаления
+        $toRemoveCount = min(count($outliers), $maxToRemove);
+        $toRemove = array_column(array_slice($outliers, 0, $toRemoveCount), 'time');
 
         // Фильтровать данные
         $filtered = array_filter($data, function ($point) use ($toRemove) {

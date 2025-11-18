@@ -177,8 +177,16 @@ class CorridorBuilder
                     }
                 }
                 unset($p);
+                // Масштабируем original_filtered
+                $originalFiltered = $cached['filtered_history'] ?? [];
+                foreach ($originalFiltered as &$p) {
+                    if (isset($p['value'])) {
+                        $p['value'] = (float)$p['value'] * $factor;
+                    }
+                }
+                unset($p);
                 $this->logger->info(
-                    "Applied autoscale to corridor: factor={$factor} (board_step={$step}, hist_step={$histStep}) for labels={$labelsJson}"
+                    "Applied autoscale to corridor and original_filtered: factor={$factor} (board_step={$step}, hist_step={$histStep}) for labels={$labelsJson}"
                 );
             }
 
@@ -256,6 +264,7 @@ class CorridorBuilder
             $item = [
                 'labels'                   => json_decode($labelsJson, true),
                 'original'                 => $orig,
+                'original_filtered'        => $originalFiltered,
                 'dft_upper'                => $cU,
                 'dft_lower'                => $cL,
                 'historical_anomaly_stats' => $cached['meta']['anomaly_stats'] ?? [],

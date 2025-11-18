@@ -250,8 +250,9 @@ class StatsCacheManager {
 
         // Умная фильтрация выбросов перед расчётом границ
         $originalHistoryData = $historyData;
-        $historyData = $this->smartOutlierFilter->filterOutliers($historyData);
-        $this->logger->info("Smart outlier filter: original " . count($originalHistoryData) . " points, filtered " . count($historyData) . " points for {$query}, {$labelsJson}");
+        $filteredHistoryData = $this->smartOutlierFilter->filterOutliers($historyData);
+        $this->logger->info("Smart outlier filter: original " . count($originalHistoryData) . " points, filtered " . count($filteredHistoryData) . " points for {$query}, {$labelsJson}");
+        $historyData = $filteredHistoryData;
 
         // Рассчитываем DFT и статистики
         $range = $this->dataProcessor->getActualDataRange($historyData);
@@ -539,6 +540,7 @@ class StatsCacheManager {
             ],
             'upper_shift' => $upperShift,
             'lower_shift' => $lowerShift,
+            'filtered_history' => $filteredHistoryData,
         ];
 
         // Сохраняем в кэш

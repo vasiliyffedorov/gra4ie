@@ -19,8 +19,7 @@ class DFTProcessorTest extends TestCase
             'corridor_params' => [
                 'step' => 60,
                 'max_harmonics' => 10,
-                'use_common_trend' => false,
-                'use_nudft' => false
+                'use_common_trend' => false
             ]
         ];
         $this->logger = new Logger('php://memory', Logger::LEVEL_INFO);

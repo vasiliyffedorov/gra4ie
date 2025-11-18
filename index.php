@@ -1,6 +1,5 @@
 <?php
 declare(strict_types=1);
-declare(ticks=1);
 
 require __DIR__ . '/vendor/autoload.php';
 
@@ -8,19 +7,6 @@ header('Content-Type: application/json');
 ini_set('display_errors', 1);
 error_reporting(E_ALL);
 set_time_limit(300);
-
-// Timeout handler
-function timeout_handler() {
-    http_response_code(504);
-    echo json_encode(['status' => 'error', 'error' => 'Request timeout']);
-    exit;
-}
-
-// Set up signal handler for timeout
-if (function_exists('pcntl_signal')) {
-    pcntl_signal(SIGALRM, 'timeout_handler');
-    pcntl_alarm(30); // 30s timeout
-}
 
 function normalizeQuery(string $q): string {
     return trim(preg_replace('/\s+/', ' ', str_replace(["\r","\n"], '', $q)));

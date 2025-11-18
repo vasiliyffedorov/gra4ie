@@ -46,6 +46,7 @@ class ResponseFormatter {
         $this->config = $config;
         $showMetrics = $config['dashboard']['show_metrics'] ?? [
             'original',
+            'original_filtered',
             'nodata',
             'dft_upper',
             'dft_lower',
@@ -112,6 +113,10 @@ class ResponseFormatter {
 
             if (in_array('original', $metricsToShow) && isset($result['original'])) {
                 $this->addMetric($formatted, $labels, $query, 'original', $result['original'] ?? []);
+            }
+
+            if (in_array('original_filtered', $metricsToShow) && isset($result['original_filtered'])) {
+                $this->addMetric($formatted, $labels, $query, 'original_filtered', $result['original_filtered'] ?? []);
             }
 
             if (in_array('nodata', $metricsToShow) && isset($result['nodata'])) {
