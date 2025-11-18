@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Processors;
 
-use App\Processors\PostCorridorFilter;
+use App\Processors\SmartOutlierFilter;
 use App\Utilities\CacheHelpers;
 
 use App\Interfaces\LoggerInterface;
@@ -26,6 +26,7 @@ class StatsCacheManager {
     private AnomalyDetectorInterface $anomalyDetector;
     private GrafanaClientInterface $client;
     private \App\Processors\HistoricalPeriodOptimizer $optimizer;
+    private SmartOutlierFilter $smartOutlierFilter;
 
     public function __construct(
         array $config,
@@ -50,6 +51,7 @@ class StatsCacheManager {
         $this->anomalyDetector = $anomalyDetector;
         $this->client = $client;
         $this->optimizer = $optimizer;
+        $this->smartOutlierFilter = new SmartOutlierFilter($config);
     }
 
     /**
@@ -246,18 +248,10 @@ class StatsCacheManager {
             }
         }
 
-        // Preprocess data: trim leading and trailing zeros
+        // Умная фильтрация выбросов перед расчётом границ
         $originalHistoryData = $historyData;
-        $historicalAssoc = [];
-        foreach ($historyData as $point) {
-            $historicalAssoc[(int)$point['time']] = (float)$point['value'];
-        }
-        $historicalAssoc = $this->preprocessData($historicalAssoc);
-        $historyData = [];
-        foreach ($historicalAssoc as $t => $v) {
-            $historyData[] = ['time' => $t, 'value' => $v];
-        }
-        usort($historyData, fn($a, $b) => $a['time'] <=> $b['time']);
+        $historyData = $this->smartOutlierFilter->filterOutliers($historyData);
+        $this->logger->info("Smart outlier filter: original " . count($originalHistoryData) . " points, filtered " . count($historyData) . " points for {$query}, {$labelsJson}");
 
         // Рассчитываем DFT и статистики
         $range = $this->dataProcessor->getActualDataRange($historyData);
@@ -461,20 +455,6 @@ class StatsCacheManager {
         // Генерируем DFT
         $bounds = $this->dataProcessor->calculateBounds($historyData, $longStart, $longEnd, $longStep);
 
-        // Фильтрация выбросов после расчета границ
-        if ($currentConfig['corridor_params']['enable_outlier_filter'] ?? false) {
-            $filteredHistory = PostCorridorFilter::filterOutliers(
-                $historyData,
-                $bounds,
-                $currentConfig['corridor_params']['lower_percentile'] ?? 5.0,
-                $currentConfig['corridor_params']['upper_percentile'] ?? 5.0
-            );
-            $this->logger->info("Filtered outliers: original " . count($historyData) . " points, filtered " . count($filteredHistory) . " points for {$query}, {$labelsJson}");
-            $historyData = $filteredHistory;
-            // Пересчитываем границы на отфильтрованных данных
-            $bounds = $this->dataProcessor->calculateBounds($historyData, $longStart, $longEnd, $longStep);
-        }
-
         $dftResult = $this->dftProcessor->generateDFT($bounds, $longStart, $longEnd, $longStep);
 
         // Debug: log bounds for cgate__cgatecron
@@ -657,43 +637,6 @@ class StatsCacheManager {
     }
 
 
-    private function preprocessData(array $raw): array
-    {
-        $allZeros = true;
-        $firstNonzeroKey = null;
-        foreach ($raw as $t => $v) {
-            if ($v > 0) {
-                $firstNonzeroKey = $t;
-                $allZeros = false;
-                break;
-            }
-        }
-
-        $data = $raw;
-        if (!$allZeros && $firstNonzeroKey !== null) {
-            $keys = array_keys($raw);
-            $trimIndex = array_search($firstNonzeroKey, $keys);
-            $data = array_slice($raw, $trimIndex, null, true);
-        }
-
-        // Обрезка хвостовых нулей
-        if (!empty($data)) {
-            $lastNonzeroKey = null;
-            foreach (array_reverse($data, true) as $t => $v) {
-                if ($v > 0) {
-                    $lastNonzeroKey = $t;
-                    break;
-                }
-            }
-            if ($lastNonzeroKey !== null) {
-                $keys = array_keys($data);
-                $trimIndex = array_search($lastNonzeroKey, $keys) + 1;
-                $data = array_slice($data, 0, $trimIndex, true);
-            }
-        }
-
-        return $data;
-    }
 
 }
 ?>
