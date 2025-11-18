@@ -458,20 +458,22 @@ class StatsCacheManager {
             }
         }
         
-        // Фильтрация выбросов перед расчетом границ
+        // Генерируем DFT
+        $bounds = $this->dataProcessor->calculateBounds($historyData, $longStart, $longEnd, $longStep);
+
+        // Фильтрация выбросов после расчета границ
         if ($currentConfig['corridor_params']['enable_outlier_filter'] ?? false) {
             $filteredHistory = PostCorridorFilter::filterOutliers(
                 $historyData,
-                [],
+                $bounds,
                 $currentConfig['corridor_params']['lower_percentile'] ?? 5.0,
                 $currentConfig['corridor_params']['upper_percentile'] ?? 5.0
             );
             $this->logger->info("Filtered outliers: original " . count($historyData) . " points, filtered " . count($filteredHistory) . " points for {$query}, {$labelsJson}");
             $historyData = $filteredHistory;
+            // Пересчитываем границы на отфильтрованных данных
+            $bounds = $this->dataProcessor->calculateBounds($historyData, $longStart, $longEnd, $longStep);
         }
-
-        // Генерируем DFT
-        $bounds = $this->dataProcessor->calculateBounds($historyData, $longStart, $longEnd, $longStep);
 
         $dftResult = $this->dftProcessor->generateDFT($bounds, $longStart, $longEnd, $longStep);
 
