@@ -8,14 +8,14 @@ class PostCorridorFilter {
      * Фильтрует выбросы из исторических данных, удаляя заданный процент самых низких и самых высоких значений.
      *
      * @param array $historyData Исторические данные: [['time' => int, 'value' => float], ...]
-     * @param array $bounds Границы (не используются в фильтрации, но для совместимости)
+     * @param array $bounds Границы (опционально, не используются в фильтрации)
      * @param float $lowerPercentile Процент самых низких значений для удаления (например, 5.0)
      * @param float $upperPercentile Процент самых высоких значений для удаления (например, 5.0)
      * @return array Отфильтрованные данные: [['time' => int, 'value' => float], ...]
      */
     public static function filterOutliers(
         array $historyData,
-        array $bounds,
+        array $bounds = [],
         float $lowerPercentile = 5.0,
         float $upperPercentile = 5.0
     ): array {
